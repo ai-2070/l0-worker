@@ -225,7 +225,7 @@ interface ModelSpec {
 | Param | Type | Description |
 |-------|------|-------------|
 | `temperature` | number | Sampling temperature (0-2) |
-| `maxTokens` | number | Maximum output tokens |
+| `maxOutputTokens` | number | Maximum output tokens |
 | `topP` | number | Nucleus sampling |
 | `frequencyPenalty` | number | Frequency penalty (-2 to 2) |
 | `presencePenalty` | number | Presence penalty (-2 to 2) |
@@ -299,7 +299,7 @@ interface JsonOutput {
       {
         "provider": "openai",
         "model": "gpt-4o",
-        "params": { "temperature": 0.7, "maxTokens": 1000 }
+        "params": { "temperature": 0.7, "maxOutputTokens": 1000 }
       }
     ],
     "retry": {
