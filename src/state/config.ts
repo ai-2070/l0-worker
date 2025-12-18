@@ -90,6 +90,9 @@ export class ConfigManager {
     featureFlags?: Record<string, boolean>;
   }): void {
     if (update.maxConcurrency !== undefined) {
+      if (update.maxConcurrency < 1) {
+        throw new Error("maxConcurrency must be at least 1");
+      }
       this.runtime.maxConcurrency = update.maxConcurrency;
     }
     if (update.resourceCaps !== undefined) {

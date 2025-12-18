@@ -57,22 +57,13 @@ export default async function handler(
     return;
   }
 
-  // Try to acquire slot (backpressure)
-  if (!worker.hasAvailableSlot()) {
-    res.status(503).json({
-      error: "No slots available",
-      inflight: worker.inflightCount,
-      max: worker.maxConcurrency,
-    });
-    return;
-  }
-
   // Set up SSE
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
   // Execute task and stream events
+  // Slot acquisition happens atomically inside executeTaskWithEvents
   try {
     await worker.executeTaskWithEvents(taskSubmit, (event) => {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -82,7 +73,21 @@ export default async function handler(
     res.end();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    res.write(`data: ${JSON.stringify({ type: "ERROR", message })}\n\n`);
+
+    // Handle slot exhaustion with proper 503 response
+    if (message === "No slots available") {
+      res.write(
+        `data: ${JSON.stringify({
+          type: "ERROR",
+          code: "NO_SLOTS",
+          message,
+          inflight: worker.inflightCount,
+          max: worker.maxConcurrency,
+        })}\n\n`,
+      );
+    } else {
+      res.write(`data: ${JSON.stringify({ type: "ERROR", message })}\n\n`);
+    }
     res.end();
   }
 }

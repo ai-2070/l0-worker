@@ -36,7 +36,7 @@ npm run dev
 npm run dev:vercel
 
 # Type checking
-npm run typecheck
+npm run lint
 
 # Build
 npm run build

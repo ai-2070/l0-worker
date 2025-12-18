@@ -4,7 +4,8 @@
  * No internal queue - backpressure by rejection (silence).
  */
 export class SlotManager {
-  private readonly slots: Map<string, { taskId: string; startedAt: number }> = new Map();
+  private readonly slots: Map<string, { taskId: string; startedAt: number }> =
+    new Map();
   private _maxConcurrency: number;
 
   constructor(maxConcurrency: number) {
@@ -16,6 +17,9 @@ export class SlotManager {
   }
 
   set maxConcurrency(value: number) {
+    if (value < 1) {
+      throw new Error("maxConcurrency must be at least 1");
+    }
     this._maxConcurrency = value;
   }
 
@@ -79,7 +83,9 @@ export class SlotManager {
   /**
    * Get slot info for a task.
    */
-  getSlotInfo(taskId: string): { taskId: string; startedAt: number } | undefined {
+  getSlotInfo(
+    taskId: string,
+  ): { taskId: string; startedAt: number } | undefined {
     return this.slots.get(taskId);
   }
 

@@ -98,8 +98,9 @@ Get current worker status.
   "state": "accepting",
   "protocol_version": "1.0.0",
   "max_concurrency": 1,
-  "inflight": 0,
-  "available_slots": 1
+  "inflight_tasks": 0,
+  "available_slots": 1,
+  "timestamp": 1702900000000
 }
 ```
 
@@ -107,11 +108,11 @@ Get current worker status.
 
 | State | Description |
 |-------|-------------|
-| `boot` | Initializing |
-| `ready` | Ready to accept tasks |
-| `accepting` | Actively accepting and processing tasks |
-| `draining` | Graceful shutdown, finishing existing tasks |
-| `offline` | Shut down |
+| `BOOT` | Initializing |
+| `READY` | Ready to accept tasks |
+| `ACCEPTING` | Actively accepting and processing tasks |
+| `DRAINING` | Graceful shutdown, finishing existing tasks |
+| `OFFLINE` | Shut down |
 
 ---
 
@@ -126,9 +127,8 @@ Hot-reload worker configuration.
 ```json
 {
   "success": true,
-  "applied": {
-    "max_concurrency": 2
-  }
+  "max_concurrency": 2,
+  "timestamp": 1702900000000
 }
 ```
 

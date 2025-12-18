@@ -115,40 +115,41 @@ export class VercelWorker {
     const taskId = taskSubmit.task_id;
     const workerId = this.workerId;
 
+    // Parse payload before acquiring slot - fail fast on invalid input
+    const payload = parseTaskPayload(taskSubmit.payload);
+
     // Acquire slot
     if (!this.slots.acquire(taskId)) {
       throw new Error("No slots available");
     }
 
-    // Transition to ACCEPTING if needed
-    if (this.stateMachine.state === WorkerState.READY) {
-      this.stateMachine.transition(WorkerState.ACCEPTING);
-    }
-
     // Set up drain timer before function timeout (only if timeout configured)
     let drainTimer: ReturnType<typeof setTimeout> | null = null;
-    if (config.functionTimeoutMs > 0) {
-      const drainTimeoutMs = config.functionTimeoutMs - config.drainBufferMs;
-      if (drainTimeoutMs > 0) {
-        drainTimer = setTimeout(() => {
-          if (this.stateMachine.state !== WorkerState.DRAINING) {
-            this.stateMachine.transition(WorkerState.DRAINING);
-            const drainingEvent: WorkerDrainingEvent = {
-              type: "WORKER_DRAINING",
-              worker_id: workerId,
-              reason: "function_timeout_approaching",
-              timestamp: clock.now(),
-            };
-            emit(drainingEvent);
-          }
-        }, drainTimeoutMs);
-      }
-    }
 
     try {
-      // Parse payload
-      const payload = parseTaskPayload(taskSubmit.payload);
+      // Transition to ACCEPTING if needed
+      if (this.stateMachine.state === WorkerState.READY) {
+        this.stateMachine.transition(WorkerState.ACCEPTING);
+      }
 
+      // Configure drain timer
+      if (config.functionTimeoutMs > 0) {
+        const drainTimeoutMs = config.functionTimeoutMs - config.drainBufferMs;
+        if (drainTimeoutMs > 0) {
+          drainTimer = setTimeout(() => {
+            if (this.stateMachine.state !== WorkerState.DRAINING) {
+              this.stateMachine.transition(WorkerState.DRAINING);
+              const drainingEvent: WorkerDrainingEvent = {
+                type: "WORKER_DRAINING",
+                worker_id: workerId,
+                reason: "function_timeout_approaching",
+                timestamp: clock.now(),
+              };
+              emit(drainingEvent);
+            }
+          }, drainTimeoutMs);
+        }
+      }
       // Emit TASK_ACCEPTED
       const acceptedEvent: TaskAcceptedEvent = {
         type: "TASK_ACCEPTED",
