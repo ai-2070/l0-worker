@@ -16,12 +16,14 @@ const localPreset = {
   maxConcurrency: 64,
   functionTimeoutMs: 0, // No timeout for local
   drainBufferMs: 5000,
+  skipAuthValidation: true, // Skip HMAC validation for local dev
 } as const;
 
 const vercelPreset = {
   maxConcurrency: 1,
   functionTimeoutMs: 60000, // 60s Pro default
   drainBufferMs: 5000,
+  skipAuthValidation: false, // Always validate in production
 } as const;
 
 /**
@@ -61,4 +63,12 @@ export const config = {
     process.env.DRAIN_BUFFER_MS,
     preset.drainBufferMs,
   ),
+
+  /**
+   * Skip HMAC auth validation.
+   * Enabled by default for local, disabled for Vercel.
+   * Set SKIP_AUTH_VALIDATION=true to override.
+   */
+  skipAuthValidation:
+    process.env.SKIP_AUTH_VALIDATION === "true" || preset.skipAuthValidation,
 } as const;

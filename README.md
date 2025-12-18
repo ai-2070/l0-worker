@@ -236,6 +236,7 @@ The worker auto-detects deployment environment and applies appropriate defaults:
 | `maxConcurrency` | 64 | 1 |
 | `functionTimeoutMs` | 0 (disabled) | 60000 (60s) |
 | `drainBufferMs` | 5000 | 5000 |
+| `skipAuthValidation` | true | false |
 
 Preset is selected by:
 - `DEPLOYMENT=vercel` env var, or
@@ -251,6 +252,7 @@ All variables override preset defaults:
 | `MAX_CONCURRENCY` | Max concurrent tasks |
 | `FUNCTION_TIMEOUT_MS` | Serverless timeout in ms (0 = disabled) |
 | `DRAIN_BUFFER_MS` | Buffer before timeout to emit WORKER_DRAINING |
+| `SKIP_AUTH_VALIDATION` | Skip HMAC auth (default: true for local) |
 | `L0_AUTH_SECRET` | Shared secret for HMAC auth (required in production) |
 | `OPENAI_API_KEY` | OpenAI API key |
 

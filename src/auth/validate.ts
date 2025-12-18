@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { AuthEnvelopeSchema } from "../events/inbound.js";
+import { config } from "../config.js";
 
 export type AuthResult = { valid: true } | { valid: false; reason: string };
 
@@ -76,13 +77,20 @@ export function validateAuth(auth: unknown, taskId: string): AuthResult {
     return { valid: false, reason: "issued_in_future" };
   }
 
-  // Validate HMAC signature if secret is configured
+  // Skip HMAC validation if configured (local dev)
+  if (config.skipAuthValidation) {
+    return { valid: true };
+  }
+
+  // Validate HMAC signature
   const secret = getAuthSecret();
-  if (secret) {
-    const expectedSignature = computeSignature(secret, taskId, issued_at, ttl);
-    if (!secureCompare(token, expectedSignature)) {
-      return { valid: false, reason: "invalid_signature" };
-    }
+  if (!secret) {
+    return { valid: false, reason: "missing_auth_secret" };
+  }
+
+  const expectedSignature = computeSignature(secret, taskId, issued_at, ttl);
+  if (!secureCompare(token, expectedSignature)) {
+    return { valid: false, reason: "invalid_signature" };
   }
 
   return { valid: true };
