@@ -6,7 +6,7 @@
 export class SlotManager {
   private readonly slots: Map<string, { taskId: string; startedAt: number }> =
     new Map();
-  private _maxConcurrency: number;
+  private _maxConcurrency!: number;
 
   constructor(maxConcurrency: number) {
     this.maxConcurrency = maxConcurrency;
