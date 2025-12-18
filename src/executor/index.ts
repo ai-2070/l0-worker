@@ -3,6 +3,7 @@ export {
   OutputValidationError,
   type ExecutionResult,
   type ExecutionCallbacks,
+  type ExecutionOptions,
   type L0Event,
 } from "./executor.js";
 export {

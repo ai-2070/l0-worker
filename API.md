@@ -36,11 +36,11 @@ Submit a task for execution. Returns streaming SSE response.
 Each event is a JSON object on a single line prefixed with `data: `:
 
 ```
-data: {"type":"TASK_ACCEPTED","task_id":"task-123","worker_id":"l0-...","timestamp":1702900000000}
+data: {"type":"TASK_ACCEPTED","task_id":"task-123","worker_id":"...","timestamp":1702900000000}
 
 data: {"type":"TASK_PROGRESS","task_id":"task-123","stage":"first_token","timestamp":1702900000100}
 
-data: {"type":"TASK_COMPLETED","task_id":"task-123","worker_id":"l0-...","output":"Hello!","output_hash":"sha256:...","final_metrics":{"duration_ms":1500,"token_count":10},"timestamp":1702900001500}
+data: {"type":"TASK_COMPLETED","task_id":"task-123","worker_id":"...","output":"Hello!","output_hash":"sha256:...","final_metrics":{"duration_ms":1500,"token_count":10},"timestamp":1702900001500}
 
 data: [DONE]
 ```
@@ -94,7 +94,7 @@ Get current worker status.
 
 ```json
 {
-  "worker_id": "l0-01234567-89ab-7cde-f012-34567890abcd",
+  "worker_id": "01234567-89ab-7cde-f012-34567890abcd",
   "state": "accepting",
   "protocol_version": "1.0.0",
   "max_concurrency": 1,
@@ -352,6 +352,7 @@ interface TaskSubmit {
     memory_cap_mb?: number;
     determinism_required?: boolean;
   };
+  meta?: Record<string, unknown>;  // Passed through to L0 runtime
   input_hash: string;
   submission_ts: number;
 }

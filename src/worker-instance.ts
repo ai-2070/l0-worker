@@ -164,21 +164,25 @@ export class VercelWorker {
 
       // Execute with order
       const result = await executeOrder(taskSubmit.order, payload, {
-        onFirstToken: () => {
-          const progressEvent: TaskProgressEvent = {
-            type: "TASK_PROGRESS",
-            task_id: taskId,
-            stage: ProgressStage.FIRST_TOKEN,
-            timestamp: clock.now(),
-          };
-          emit(progressEvent);
-          // Don't await - fire and forget for streaming
-          this.eventStore.record(taskId, progressEvent);
+        callbacks: {
+          onFirstToken: () => {
+            const progressEvent: TaskProgressEvent = {
+              type: "TASK_PROGRESS",
+              task_id: taskId,
+              stage: ProgressStage.FIRST_TOKEN,
+              timestamp: clock.now(),
+            };
+            emit(progressEvent);
+            // Don't await - fire and forget for streaming
+            this.eventStore.record(taskId, progressEvent);
+          },
+          onL0Event: (l0Event) => {
+            // Pass L0 events directly to L1 without wrapping
+            emit(l0Event);
+          },
         },
-        onL0Event: (l0Event) => {
-          // Pass L0 events directly to L1 without wrapping
-          emit(l0Event);
-        },
+        meta: taskSubmit.meta,
+        workerId,
       });
 
       const duration = Date.now() - startTime;

@@ -13,7 +13,7 @@ function parseIntOrDefault(
  * L0 Worker configuration defaults.
  */
 export const config = {
-  workerId: process.env.WORKER_ID ?? `l0-${uuidv7()}`,
+  workerId: process.env.WORKER_ID ?? uuidv7(),
   maxConcurrency: parseIntOrDefault(process.env.MAX_CONCURRENCY, 1),
   protocolVersion: "1.0.0",
 

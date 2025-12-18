@@ -30,6 +30,7 @@ export const TaskSubmitSchema = z.object({
       determinism_required: z.boolean().optional(),
     })
     .optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
   input_hash: z.string(),
   submission_ts: z.number(),
 });

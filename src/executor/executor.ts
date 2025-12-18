@@ -37,6 +37,12 @@ export interface L0Event {
   [key: string]: unknown;
 }
 
+export interface ExecutionOptions {
+  callbacks?: ExecutionCallbacks;
+  meta?: Record<string, unknown>;
+  workerId?: string;
+}
+
 /**
  * Execute an inference order using L0 runtime.
  * L0 handles retry, fallback, guardrails, and network protection.
@@ -44,11 +50,15 @@ export interface L0Event {
 export async function executeOrder(
   order: InferenceOrder,
   payload: TaskPayload,
-  callbacks?: ExecutionCallbacks,
+  options?: ExecutionOptions,
 ): Promise<ExecutionResult> {
+  const { callbacks, meta, workerId } = options ?? {};
   const { execution, output } = order;
   const primaryModel = execution.models[0];
   const messages = buildMessages(payload);
+
+  // Build meta with workerId
+  const l0Meta = { ...meta, workerId };
 
   // For JSON output, use structured()
   if (output.kind === "json") {
@@ -58,11 +68,18 @@ export async function executeOrder(
       messages,
       output,
       callbacks,
+      l0Meta,
     );
   }
 
   // For text/tokens, use l0() with streamText
-  return await executeText(primaryModel, execution, messages, callbacks);
+  return await executeText(
+    primaryModel,
+    execution,
+    messages,
+    callbacks,
+    l0Meta,
+  );
 }
 
 /**
@@ -73,6 +90,7 @@ async function executeText(
   execution: InferenceOrder["execution"],
   messages: CoreMessage[],
   callbacks?: ExecutionCallbacks,
+  meta?: Record<string, unknown>,
 ): Promise<ExecutionResult> {
   const params = primaryModel.params ?? {};
   let firstTokenEmitted = false;
@@ -110,6 +128,9 @@ async function executeText(
 
     // Retry configuration from order
     retry: mapRetrySpec(execution.retry),
+
+    // Pass through meta for L0 event context
+    meta,
 
     // Forward all L0 events to L1
     onEvent: (event: L0Event) => {
@@ -149,6 +170,7 @@ async function executeStructured(
   messages: CoreMessage[],
   outputSpec: JsonOutput,
   callbacks?: ExecutionCallbacks,
+  meta?: Record<string, unknown>,
 ): Promise<ExecutionResult> {
   const params = primaryModel.params ?? {};
   let firstTokenEmitted = false;
@@ -188,6 +210,9 @@ async function executeStructured(
 
     // Auto-correct JSON if not strict
     autoCorrect: !(outputSpec.strict ?? true),
+
+    // Pass through meta for L0 event context
+    meta,
 
     // Forward all L0 events to L1, trigger onFirstToken on first data event
     onEvent: (event: L0Event) => {

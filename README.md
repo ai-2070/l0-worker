@@ -105,7 +105,7 @@ curl -X POST http://localhost:3000/api/config \
   -H "Content-Type: application/json" \
   -d '{
     "type": "WORKER_CONFIG_UPDATE",
-    "worker_id": "l0-...",
+    "worker_id": "...",
     "max_concurrency": 2,
     "effective_ts": 1702900000000
   }'
@@ -231,7 +231,7 @@ Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WORKER_ID` | `l0-{uuidv7}` | Worker identifier |
+| `WORKER_ID` | uuidv7 | Worker identifier |
 | `MAX_CONCURRENCY` | `1` | Max concurrent tasks |
 | `L0_AUTH_SECRET` | - | Shared secret for HMAC auth (required in production) |
 | `OPENAI_API_KEY` | - | OpenAI API key |
