@@ -659,9 +659,11 @@ L0 runtime events are passed through directly. All have `type` and `ts` fields.
 ```json
 {
   "error": "Auth validation failed",
-  "reason": "expired" | "invalid_format" | "issued_in_future"
+  "reason": "expired"
 }
 ```
+
+Possible `reason` values: `"expired"`, `"invalid_format"`, `"issued_in_future"`
 
 ### Validation Errors
 

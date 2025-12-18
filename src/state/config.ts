@@ -41,14 +41,7 @@ export class ConfigManager {
   private readonly listeners: Array<(config: RuntimeConfig) => void> = [];
 
   constructor(config: WorkerConfigInput) {
-    this.config = {
-      workerId: config.workerId,
-      maxConcurrency: config.maxConcurrency ?? 4,
-      protocolVersion: config.protocolVersion ?? "1.0.0",
-      l1Address: config.l1Address,
-      loadReportIntervalMs: config.loadReportIntervalMs ?? 5000,
-      loadReportThreshold: config.loadReportThreshold ?? 0.1,
-    };
+    this.config = WorkerConfigSchema.parse(config);
     this.runtime = {
       maxConcurrency: this.config.maxConcurrency,
       resourceCaps: {},
@@ -81,11 +74,11 @@ export class ConfigManager {
   }
 
   get resourceCaps(): Record<string, number> {
-    return this.runtime.resourceCaps;
+    return { ...this.runtime.resourceCaps };
   }
 
   get featureFlags(): Record<string, boolean> {
-    return this.runtime.featureFlags;
+    return { ...this.runtime.featureFlags };
   }
 
   /**
@@ -111,7 +104,7 @@ export class ConfigManager {
         ...update.featureFlags,
       };
     }
-    for (const listener of this.listeners) {
+    for (const listener of [...this.listeners]) {
       listener(this.runtime);
     }
   }

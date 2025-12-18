@@ -111,14 +111,6 @@ async function executeText(
     // Retry configuration from order
     retry: mapRetrySpec(execution.retry),
 
-    // Lifecycle callbacks
-    onStart: () => {
-      if (!firstTokenEmitted) {
-        firstTokenEmitted = true;
-        callbacks?.onFirstToken?.();
-      }
-    },
-
     // Forward all L0 events to L1
     onEvent: (event: L0Event) => {
       callbacks?.onL0Event?.(event);
@@ -128,6 +120,10 @@ async function executeText(
   // Consume stream
   for await (const event of result.stream) {
     if (event.type === "token" && event.value) {
+      if (!firstTokenEmitted) {
+        firstTokenEmitted = true;
+        callbacks?.onFirstToken?.();
+      }
       content += event.value;
       tokenCount++;
       callbacks?.onToken?.(event.value);
@@ -171,21 +167,34 @@ async function executeStructured(
         presencePenalty: params.presencePenalty as number | undefined,
       }),
 
+    // Fallback streams
+    fallbackStreams: execution.fallbacks?.map((fb) => {
+      const fbParams = fb.model.params ?? {};
+      return () =>
+        streamObject({
+          model: getModel(fb.model),
+          messages,
+          schema: jsonSchema(outputSpec.schema),
+          temperature: fbParams.temperature as number | undefined,
+          maxOutputTokens: fbParams.maxTokens as number | undefined,
+          topP: fbParams.topP as number | undefined,
+          frequencyPenalty: fbParams.frequencyPenalty as number | undefined,
+          presencePenalty: fbParams.presencePenalty as number | undefined,
+        });
+    }),
+
     // Retry configuration
     retry: mapRetrySpec(execution.retry),
 
     // Auto-correct JSON if not strict
     autoCorrect: !(outputSpec.strict ?? true),
 
-    onStart: () => {
-      if (!firstTokenEmitted) {
+    // Forward all L0 events to L1, trigger onFirstToken on first data event
+    onEvent: (event: L0Event) => {
+      if (!firstTokenEmitted && event.type === "object-part") {
         firstTokenEmitted = true;
         callbacks?.onFirstToken?.();
       }
-    },
-
-    // Forward all L0 events to L1
-    onEvent: (event: L0Event) => {
       callbacks?.onL0Event?.(event);
     },
   });

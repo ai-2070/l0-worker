@@ -17,7 +17,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!parseResult.success) {
     return res.status(400).json({
       error: "Invalid request",
-      details: parseResult.error.format()
+      details: parseResult.error.format(),
     });
   }
 
@@ -31,11 +31,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Verify worker ID matches
   if (configUpdate.worker_id !== worker.workerId) {
-    return res.status(400).json({
-      error: "Worker ID mismatch",
-      expected: worker.workerId,
-      received: configUpdate.worker_id
-    });
+    return res.status(400).json({ error: "Worker ID mismatch" });
   }
 
   // Apply config update

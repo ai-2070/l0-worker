@@ -54,7 +54,7 @@ curl -X POST http://localhost:3000/api/submit \
   -d '{
     "type": "TASK_SUBMIT",
     "auth": {
-      "token": "your-32-char-minimum-token-here",
+      "token": "your-32-char-minimum-token-here!",
       "issued_at": 1702900000000,
       "ttl": 30000
     },

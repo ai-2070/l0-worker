@@ -16,7 +16,11 @@ export type WorkerState = (typeof WorkerState)[keyof typeof WorkerState];
  */
 const TRANSITIONS: Record<WorkerState, WorkerState[]> = {
   [WorkerState.BOOT]: [WorkerState.READY],
-  [WorkerState.READY]: [WorkerState.ACCEPTING, WorkerState.DRAINING, WorkerState.OFFLINE],
+  [WorkerState.READY]: [
+    WorkerState.ACCEPTING,
+    WorkerState.DRAINING,
+    WorkerState.OFFLINE,
+  ],
   [WorkerState.ACCEPTING]: [WorkerState.DRAINING, WorkerState.OFFLINE],
   [WorkerState.DRAINING]: [WorkerState.OFFLINE],
   [WorkerState.OFFLINE]: [],
@@ -28,7 +32,9 @@ const TRANSITIONS: Record<WorkerState, WorkerState[]> = {
  */
 export class WorkerStateMachine {
   private _state: WorkerState = WorkerState.BOOT;
-  private readonly listeners: Array<(from: WorkerState, to: WorkerState) => void> = [];
+  private readonly listeners: Array<
+    (from: WorkerState, to: WorkerState) => void
+  > = [];
 
   get state(): WorkerState {
     return this._state;
@@ -51,7 +57,7 @@ export class WorkerStateMachine {
     }
     const from = this._state;
     this._state = to;
-    for (const listener of this.listeners) {
+    for (const listener of [...this.listeners]) {
       listener(from, to);
     }
   }
@@ -59,7 +65,9 @@ export class WorkerStateMachine {
   /**
    * Subscribe to state transitions.
    */
-  onTransition(listener: (from: WorkerState, to: WorkerState) => void): () => void {
+  onTransition(
+    listener: (from: WorkerState, to: WorkerState) => void,
+  ): () => void {
     this.listeners.push(listener);
     return () => {
       const index = this.listeners.indexOf(listener);
@@ -73,7 +81,9 @@ export class WorkerStateMachine {
    * Check if worker is accepting new tasks.
    */
   isAccepting(): boolean {
-    return this._state === WorkerState.READY || this._state === WorkerState.ACCEPTING;
+    return (
+      this._state === WorkerState.READY || this._state === WorkerState.ACCEPTING
+    );
   }
 
   /**
