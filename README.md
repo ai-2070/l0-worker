@@ -227,14 +227,32 @@ Replay must **NEVER**:
 
 ## Configuration
 
-Environment variables:
+### Deployment Presets
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WORKER_ID` | uuidv7 | Worker identifier |
-| `MAX_CONCURRENCY` | `1` | Max concurrent tasks |
-| `L0_AUTH_SECRET` | - | Shared secret for HMAC auth (required in production) |
-| `OPENAI_API_KEY` | - | OpenAI API key |
+The worker auto-detects deployment environment and applies appropriate defaults:
+
+| Setting | Local | Vercel |
+|---------|-------|--------|
+| `maxConcurrency` | 64 | 1 |
+| `functionTimeoutMs` | 0 (disabled) | 60000 (60s) |
+| `drainBufferMs` | 5000 | 5000 |
+
+Preset is selected by:
+- `DEPLOYMENT=vercel` env var, or
+- `VERCEL` env var (auto-set by Vercel platform)
+
+### Environment Variables
+
+All variables override preset defaults:
+
+| Variable | Description |
+|----------|-------------|
+| `WORKER_ID` | Worker identifier (default: uuidv7) |
+| `MAX_CONCURRENCY` | Max concurrent tasks |
+| `FUNCTION_TIMEOUT_MS` | Serverless timeout in ms (0 = disabled) |
+| `DRAIN_BUFFER_MS` | Buffer before timeout to emit WORKER_DRAINING |
+| `L0_AUTH_SECRET` | Shared secret for HMAC auth (required in production) |
+| `OPENAI_API_KEY` | OpenAI API key |
 
 ## Project Structure
 
