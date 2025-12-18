@@ -36,11 +36,11 @@ Submit a task for execution. Returns streaming SSE response.
 Each event is a JSON object on a single line prefixed with `data: `:
 
 ```
-data: {"type":"TASK_ACCEPTED","task_id":"task-123","worker_id":"...","timestamp":1702900000000}
+data: {"type":"TASK_ACCEPTED","taskId":"task-123","workerId":"...","ts":1702900000000}
 
-data: {"type":"TASK_PROGRESS","task_id":"task-123","stage":"first_token","timestamp":1702900000100}
+data: {"type":"TASK_PROGRESS","taskId":"task-123","stage":"first_token","ts":1702900000100}
 
-data: {"type":"TASK_COMPLETED","task_id":"task-123","worker_id":"...","output":"Hello!","output_hash":"sha256:...","final_metrics":{"duration_ms":1500,"token_count":10},"timestamp":1702900001500}
+data: {"type":"TASK_COMPLETED","taskId":"task-123","workerId":"...","output":"Hello!","outputHash":"sha256:...","finalMetrics":{"durationMs":1500,"tokenCount":10},"ts":1702900001500}
 
 data: [DONE]
 ```
@@ -65,13 +65,13 @@ Replay recorded events for a task. Re-emits previously recorded events without r
 **Response:** `text/event-stream`
 
 ```
-data: {"type":"TASK_ACCEPTED","task_id":"task-123",...}
+data: {"type":"TASK_ACCEPTED","taskId":"task-123",...}
 
-data: {"type":"TASK_PROGRESS","task_id":"task-123",...}
+data: {"type":"TASK_PROGRESS","taskId":"task-123",...}
 
-data: {"type":"TASK_COMPLETED","task_id":"task-123",...}
+data: {"type":"TASK_COMPLETED","taskId":"task-123",...}
 
-data: {"type":"REPLAY_COMPLETE","events_replayed":3,"output_hash_match":true}
+data: {"type":"REPLAY_COMPLETE","eventsReplayed":3,"outputHashMatch":true}
 ```
 
 **Error Responses:**
@@ -94,13 +94,13 @@ Get current worker status.
 
 ```json
 {
-  "worker_id": "01234567-89ab-7cde-f012-34567890abcd",
-  "state": "accepting",
-  "protocol_version": "1.0.0",
-  "max_concurrency": 1,
-  "inflight_tasks": 0,
-  "available_slots": 1,
-  "timestamp": 1702900000000
+  "workerId": "01234567-89ab-7cde-f012-34567890abcd",
+  "state": "ACCEPTING",
+  "protocolVersion": "1.0.0",
+  "maxConcurrency": 1,
+  "inflightTasks": 0,
+  "availableSlots": 1,
+  "ts": 1702900000000
 }
 ```
 
@@ -127,8 +127,8 @@ Hot-reload worker configuration.
 ```json
 {
   "success": true,
-  "max_concurrency": 2,
-  "timestamp": 1702900000000
+  "maxConcurrency": 2,
+  "ts": 1702900000000
 }
 ```
 
@@ -427,10 +427,10 @@ Emitted when worker is initialized and ready.
 ```typescript
 interface WorkerReadyEvent {
   type: "WORKER_READY";
-  worker_id: string;
-  protocol_version: string;
-  max_concurrency: number;
-  timestamp: number;
+  workerId: string;
+  protocolVersion: string;
+  maxConcurrency: number;
+  ts: number;
 }
 ```
 
@@ -441,13 +441,13 @@ Current resource pressure.
 ```typescript
 interface WorkerLoadEvent {
   type: "WORKER_LOAD";
-  worker_id: string;
-  inflight_tasks: number;
-  queue_depth: number;        // Always 0 (no internal queue)
-  cpu_pressure: number;       // 0-1
-  memory_pressure: number;    // 0-1
-  gpu_pressure?: number;      // 0-1
-  timestamp: number;
+  workerId: string;
+  inflightTasks: number;
+  queueDepth: number;        // Always 0 (no internal queue)
+  cpuPressure: number;       // 0-1
+  memoryPressure: number;    // 0-1
+  gpuPressure?: number;      // 0-1
+  ts: number;
 }
 ```
 
@@ -458,9 +458,9 @@ Graceful shutdown initiated.
 ```typescript
 interface WorkerDrainingEvent {
   type: "WORKER_DRAINING";
-  worker_id: string;
+  workerId: string;
   reason: string;
-  timestamp: number;
+  ts: number;
 }
 ```
 
@@ -471,8 +471,8 @@ Worker shutting down.
 ```typescript
 interface WorkerOfflineEvent {
   type: "WORKER_OFFLINE";
-  worker_id: string;
-  timestamp: number;
+  workerId: string;
+  ts: number;
 }
 ```
 
@@ -487,9 +487,9 @@ Task accepted for execution.
 ```typescript
 interface TaskAcceptedEvent {
   type: "TASK_ACCEPTED";
-  task_id: string;
-  worker_id: string;
-  timestamp: number;
+  taskId: string;
+  workerId: string;
+  ts: number;
 }
 ```
 
@@ -500,9 +500,9 @@ Milestone reached during execution.
 ```typescript
 interface TaskProgressEvent {
   type: "TASK_PROGRESS";
-  task_id: string;
+  taskId: string;
   stage: "first_token" | "streaming" | "tool_invoked" | "checkpoint_written";
-  timestamp: number;
+  ts: number;
   metadata?: Record<string, unknown>;
 }
 ```
@@ -514,17 +514,17 @@ Execution succeeded.
 ```typescript
 interface TaskCompletedEvent {
   type: "TASK_COMPLETED";
-  task_id: string;
-  worker_id: string;
-  final_metrics: {
-    duration_ms: number;
-    token_count: number;
-    prompt_tokens?: number;
-    completion_tokens?: number;
+  taskId: string;
+  workerId: string;
+  finalMetrics: {
+    durationMs: number;
+    tokenCount: number;
+    promptTokens?: number;
+    completionTokens?: number;
   };
-  output_hash: string;
+  outputHash: string;
   output: string;
-  timestamp: number;
+  ts: number;
 }
 ```
 
@@ -535,12 +535,12 @@ Execution failed.
 ```typescript
 interface TaskFailedEvent {
   type: "TASK_FAILED";
-  task_id: string;
-  worker_id: string;
-  failure_class: FailureClass;
+  taskId: string;
+  workerId: string;
+  failureClass: FailureClass;
   retryable: boolean;
   message?: string;
-  timestamp: number;
+  ts: number;
 }
 
 type FailureClass =

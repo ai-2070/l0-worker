@@ -34,10 +34,10 @@ export type ProgressStage = (typeof ProgressStage)[keyof typeof ProgressStage];
  * Task metrics included in TASK_COMPLETED.
  */
 export const TaskMetricsSchema = z.object({
-  duration_ms: z.number(),
-  token_count: z.number(),
-  prompt_tokens: z.number().optional(),
-  completion_tokens: z.number().optional(),
+  durationMs: z.number(),
+  tokenCount: z.number(),
+  promptTokens: z.number().optional(),
+  completionTokens: z.number().optional(),
 });
 
 export type TaskMetrics = z.infer<typeof TaskMetricsSchema>;
@@ -47,10 +47,10 @@ export type TaskMetrics = z.infer<typeof TaskMetricsSchema>;
  */
 export const WorkerReadyEventSchema = z.object({
   type: z.literal("WORKER_READY"),
-  worker_id: z.string(),
-  protocol_version: z.string(),
-  max_concurrency: z.number(),
-  timestamp: z.number(),
+  workerId: z.string(),
+  protocolVersion: z.string(),
+  maxConcurrency: z.number(),
+  ts: z.number(),
 });
 
 /**
@@ -58,13 +58,13 @@ export const WorkerReadyEventSchema = z.object({
  */
 export const WorkerLoadEventSchema = z.object({
   type: z.literal("WORKER_LOAD"),
-  worker_id: z.string(),
-  inflight_tasks: z.number(),
-  queue_depth: z.number(), // Always 0 - no internal queue
-  cpu_pressure: z.number(),
-  memory_pressure: z.number(),
-  gpu_pressure: z.number().optional(),
-  timestamp: z.number(),
+  workerId: z.string(),
+  inflightTasks: z.number(),
+  queueDepth: z.number(), // Always 0 - no internal queue
+  cpuPressure: z.number(),
+  memoryPressure: z.number(),
+  gpuPressure: z.number().optional(),
+  ts: z.number(),
 });
 
 /**
@@ -72,9 +72,9 @@ export const WorkerLoadEventSchema = z.object({
  */
 export const TaskAcceptedEventSchema = z.object({
   type: z.literal("TASK_ACCEPTED"),
-  task_id: z.string(),
-  worker_id: z.string(),
-  timestamp: z.number(),
+  taskId: z.string(),
+  workerId: z.string(),
+  ts: z.number(),
 });
 
 /**
@@ -82,14 +82,14 @@ export const TaskAcceptedEventSchema = z.object({
  */
 export const TaskProgressEventSchema = z.object({
   type: z.literal("TASK_PROGRESS"),
-  task_id: z.string(),
+  taskId: z.string(),
   stage: z.enum([
     ProgressStage.FIRST_TOKEN,
     ProgressStage.STREAMING,
     ProgressStage.TOOL_INVOKED,
     ProgressStage.CHECKPOINT_WRITTEN,
   ]),
-  timestamp: z.number(),
+  ts: z.number(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -98,12 +98,12 @@ export const TaskProgressEventSchema = z.object({
  */
 export const TaskCompletedEventSchema = z.object({
   type: z.literal("TASK_COMPLETED"),
-  task_id: z.string(),
-  worker_id: z.string(),
-  final_metrics: TaskMetricsSchema,
-  output_hash: z.string(),
+  taskId: z.string(),
+  workerId: z.string(),
+  finalMetrics: TaskMetricsSchema,
+  outputHash: z.string(),
   output: z.string(),
-  timestamp: z.number(),
+  ts: z.number(),
 });
 
 /**
@@ -111,9 +111,9 @@ export const TaskCompletedEventSchema = z.object({
  */
 export const TaskFailedEventSchema = z.object({
   type: z.literal("TASK_FAILED"),
-  task_id: z.string(),
-  worker_id: z.string(),
-  failure_class: z.enum([
+  taskId: z.string(),
+  workerId: z.string(),
+  failureClass: z.enum([
     FailureClass.TIMEOUT,
     FailureClass.RATE_LIMITED,
     FailureClass.CONTEXT_LENGTH_EXCEEDED,
@@ -127,7 +127,7 @@ export const TaskFailedEventSchema = z.object({
   ]),
   retryable: z.boolean(),
   message: z.string().optional(),
-  timestamp: z.number(),
+  ts: z.number(),
 });
 
 /**
@@ -135,9 +135,9 @@ export const TaskFailedEventSchema = z.object({
  */
 export const WorkerDrainingEventSchema = z.object({
   type: z.literal("WORKER_DRAINING"),
-  worker_id: z.string(),
+  workerId: z.string(),
   reason: z.string(),
-  timestamp: z.number(),
+  ts: z.number(),
 });
 
 /**
@@ -145,8 +145,8 @@ export const WorkerDrainingEventSchema = z.object({
  */
 export const WorkerOfflineEventSchema = z.object({
   type: z.literal("WORKER_OFFLINE"),
-  worker_id: z.string(),
-  timestamp: z.number(),
+  workerId: z.string(),
+  ts: z.number(),
 });
 
 /**

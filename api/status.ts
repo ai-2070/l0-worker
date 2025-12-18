@@ -19,13 +19,13 @@ export default function handler(req: VercelRequest, res: VercelResponse): void {
   const worker = getWorkerInstance() ?? createWorkerInstance();
 
   const status = {
-    worker_id: worker.workerId,
+    workerId: worker.workerId,
     state: worker.state,
-    protocol_version: worker.protocolVersion,
-    max_concurrency: worker.maxConcurrency,
-    inflight_tasks: worker.inflightCount,
-    available_slots: worker.availableSlots,
-    timestamp: Date.now(),
+    protocolVersion: worker.protocolVersion,
+    maxConcurrency: worker.maxConcurrency,
+    inflightTasks: worker.inflightCount,
+    availableSlots: worker.availableSlots,
+    ts: Date.now(),
   };
 
   res.status(200).json(status);

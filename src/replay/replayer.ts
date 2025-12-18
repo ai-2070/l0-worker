@@ -67,7 +67,7 @@ export class Replayer {
 
       // Track output hash if present
       if (event.type === "TASK_COMPLETED") {
-        outputHash = event.output_hash;
+        outputHash = event.outputHash;
       }
     }
 

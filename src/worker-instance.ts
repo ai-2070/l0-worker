@@ -141,9 +141,9 @@ export class VercelWorker {
               this.stateMachine.transition(WorkerState.DRAINING);
               const drainingEvent: WorkerDrainingEvent = {
                 type: "WORKER_DRAINING",
-                worker_id: workerId,
+                workerId,
                 reason: "function_timeout_approaching",
-                timestamp: clock.now(),
+                ts: clock.now(),
               };
               emit(drainingEvent);
             }
@@ -153,9 +153,9 @@ export class VercelWorker {
       // Emit TASK_ACCEPTED
       const acceptedEvent: TaskAcceptedEvent = {
         type: "TASK_ACCEPTED",
-        task_id: taskId,
-        worker_id: workerId,
-        timestamp: clock.now(),
+        taskId,
+        workerId,
+        ts: clock.now(),
       };
       emit(acceptedEvent);
       await this.eventStore.record(taskId, acceptedEvent);
@@ -168,9 +168,9 @@ export class VercelWorker {
           onFirstToken: () => {
             const progressEvent: TaskProgressEvent = {
               type: "TASK_PROGRESS",
-              task_id: taskId,
+              taskId,
               stage: ProgressStage.FIRST_TOKEN,
-              timestamp: clock.now(),
+              ts: clock.now(),
             };
             emit(progressEvent);
             // Don't await - fire and forget for streaming
@@ -191,17 +191,17 @@ export class VercelWorker {
       // Emit TASK_COMPLETED
       const completedEvent: TaskCompletedEvent = {
         type: "TASK_COMPLETED",
-        task_id: taskId,
-        worker_id: workerId,
-        final_metrics: {
-          duration_ms: duration,
-          token_count: result.tokenCount,
-          prompt_tokens: result.inputTokens,
-          completion_tokens: result.outputTokens,
+        taskId,
+        workerId,
+        finalMetrics: {
+          durationMs: duration,
+          tokenCount: result.tokenCount,
+          promptTokens: result.inputTokens,
+          completionTokens: result.outputTokens,
         },
-        output_hash: outputHash,
+        outputHash,
         output: result.content,
-        timestamp: clock.now(),
+        ts: clock.now(),
       };
       emit(completedEvent);
       await this.eventStore.record(taskId, completedEvent);
@@ -211,12 +211,12 @@ export class VercelWorker {
 
       const failedEvent: TaskFailedEvent = {
         type: "TASK_FAILED",
-        task_id: taskId,
-        worker_id: workerId,
-        failure_class: failureClass,
+        taskId,
+        workerId,
+        failureClass,
         retryable,
         message: error instanceof Error ? error.message : String(error),
-        timestamp: clock.now(),
+        ts: clock.now(),
       };
       emit(failedEvent);
       await this.eventStore.record(taskId, failedEvent);

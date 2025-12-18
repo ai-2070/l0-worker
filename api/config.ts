@@ -43,7 +43,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   return res.status(200).json({
     success: true,
-    max_concurrency: worker.maxConcurrency,
-    timestamp: Date.now(),
+    maxConcurrency: worker.maxConcurrency,
+    ts: Date.now(),
   });
 }

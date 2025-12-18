@@ -47,7 +47,7 @@ export class MemoryEventStore implements EventStore {
     const events = this.events.get(taskId) ?? [];
     for (const event of events) {
       if (event.type === "TASK_COMPLETED") {
-        return event.output_hash;
+        return event.outputHash;
       }
     }
     return null;
