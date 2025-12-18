@@ -31,7 +31,7 @@ export default async function handler(
   const replayRequest = parseResult.data;
 
   // Validate auth (ephemeral, single-invocation)
-  const authResult = validateAuth(replayRequest.auth);
+  const authResult = validateAuth(replayRequest.auth, replayRequest.task_id);
   if (!authResult.valid) {
     res.status(401).json({
       error: "Auth validation failed",

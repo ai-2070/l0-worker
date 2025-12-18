@@ -1,1 +1,5 @@
-export { validateAuth, type AuthResult } from "./validate.js";
+export {
+  validateAuth,
+  generateAuthToken,
+  type AuthResult,
+} from "./validate.js";

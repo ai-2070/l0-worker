@@ -138,31 +138,52 @@ Hot-reload worker configuration.
 
 ### AuthEnvelope
 
-Ephemeral, single-invocation authentication.
+Ephemeral, single-invocation authentication with HMAC verification.
 
 ```typescript
 interface AuthEnvelope {
-  token: string;      // Min 32 characters, high entropy
+  token: string;      // HMAC-SHA256 signature (base64)
   issued_at: number;  // Unix timestamp (ms) when token was created
   ttl: number;        // Time-to-live in milliseconds
 }
 ```
 
-**Validation:**
+**Token Generation (L1 side):**
 
-1. **Format:** Token length >= 32, TTL > 0
+```typescript
+import { createHmac } from "node:crypto";
+
+function generateAuthToken(
+  secret: string,
+  taskId: string,
+  issuedAt: number,
+  ttl: number
+): string {
+  const payload = `${taskId}|${issuedAt}|${ttl}`;
+  return createHmac("sha256", secret).update(payload, "utf8").digest("base64");
+}
+```
+
+**Validation (L0 side):**
+
+1. **Format:** Token is valid base64, TTL > 0
 2. **Freshness:** `Date.now() < issued_at + ttl`
 3. **Clock skew:** `issued_at` not more than 5 seconds in future
+4. **Signature:** `token === HMAC-SHA256(L0_AUTH_SECRET, task_id|issued_at|ttl)`
+
+If `L0_AUTH_SECRET` environment variable is not set, signature verification is skipped (development mode only).
 
 **Example:**
 
 ```json
 {
-  "token": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+  "token": "K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols=",
   "issued_at": 1702900000000,
   "ttl": 30000
 }
 ```
+
+Note: The example token is `HMAC-SHA256(secret, "task-123|1702900000000|30000")` in base64.
 
 ---
 
@@ -342,7 +363,7 @@ interface TaskSubmit {
 {
   "type": "TASK_SUBMIT",
   "auth": {
-    "token": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
+    "token": "K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols=",
     "issued_at": 1702900000000,
     "ttl": 30000
   },

@@ -36,7 +36,7 @@ export default async function handler(
   const taskSubmit = parseResult.data;
 
   // Validate auth (ephemeral, single-invocation)
-  const authResult = validateAuth(taskSubmit.auth);
+  const authResult = validateAuth(taskSubmit.auth, taskSubmit.task_id);
   if (!authResult.valid) {
     res.status(401).json({
       error: "Auth validation failed",

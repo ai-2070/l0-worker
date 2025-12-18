@@ -54,7 +54,7 @@ curl -X POST http://localhost:3000/api/submit \
   -d '{
     "type": "TASK_SUBMIT",
     "auth": {
-      "token": "your-32-char-minimum-token-here!",
+      "token": "K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols=",
       "issued_at": 1702900000000,
       "ttl": 30000
     },
@@ -151,21 +151,32 @@ Every task submission requires an `order` that defines execution and output cont
 
 ## Authentication
 
-Ephemeral, single-invocation auth envelope:
+Ephemeral, single-invocation auth with HMAC verification:
 
 ```typescript
 {
   "auth": {
-    "token": "min-32-char-high-entropy-secret",
+    "token": "HMAC-SHA256(secret, task_id|issued_at|ttl)",  // base64
     "issued_at": 1702900000000,  // Unix timestamp ms
     "ttl": 30000                  // Validity window ms
   }
 }
 ```
 
-- Token validated once per request
+**L1 generates tokens:**
+```typescript
+import { createHmac } from "node:crypto";
+
+const payload = `${taskId}|${issuedAt}|${ttl}`;
+const token = createHmac("sha256", L0_AUTH_SECRET)
+  .update(payload, "utf8")
+  .digest("base64");
+```
+
+- Token validated once per request via HMAC signature
 - Never stored, never reused
 - Freshness check: `now - issued_at < ttl`
+- If `L0_AUTH_SECRET` is not set, signature verification is skipped (dev mode)
 
 ## Events
 
@@ -222,6 +233,7 @@ Environment variables:
 |----------|---------|-------------|
 | `WORKER_ID` | `l0-{uuidv7}` | Worker identifier |
 | `MAX_CONCURRENCY` | `1` | Max concurrent tasks |
+| `L0_AUTH_SECRET` | - | Shared secret for HMAC auth (required in production) |
 | `OPENAI_API_KEY` | - | OpenAI API key |
 
 ## Project Structure
