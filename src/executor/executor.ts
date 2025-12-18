@@ -13,7 +13,6 @@ import { getModel } from "./providers.js";
 
 export interface ExecutionResult {
   content: string;
-  outputHash: string;
   tokenCount: number;
   inputTokens: number;
   outputTokens: number;
@@ -153,7 +152,6 @@ async function executeText(
 
   return {
     content,
-    outputHash: "", // Computed by caller
     tokenCount,
     inputTokens: result.state.inputTokens ?? 0,
     outputTokens: result.state.outputTokens ?? tokenCount,
@@ -228,7 +226,6 @@ async function executeStructured(
 
   return {
     content,
-    outputHash: "", // Computed by caller
     tokenCount: result.state?.tokenCount ?? 0,
     inputTokens: result.state?.inputTokens ?? 0,
     outputTokens: result.state?.outputTokens ?? 0,

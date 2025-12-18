@@ -132,6 +132,14 @@ Hot-reload worker configuration.
 }
 ```
 
+**Error Responses:**
+
+| Status | Reason |
+|--------|--------|
+| 400 | Invalid request body or worker ID mismatch |
+| 405 | Method not allowed |
+| 503 | Worker not initialized |
+
 ---
 
 ## Request Types
@@ -685,7 +693,7 @@ L0 runtime events are passed through directly. All have `type` and `ts` fields.
 }
 ```
 
-Possible `reason` values: `"expired"`, `"invalid_format"`, `"issued_in_future"`
+Possible `reason` values: `"expired"`, `"invalid_format"`, `"issued_in_future"`, `"invalid_signature"`, `"missing_auth_secret"`
 
 ### Validation Errors
 

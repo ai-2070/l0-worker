@@ -5,17 +5,24 @@ import { z } from "zod";
  * With InferenceOrder, payload is just the prompt/messages.
  * Model selection and params come from order.execution.
  */
-export const TaskPayloadSchema = z.object({
-  prompt: z.string().optional(),
-  messages: z
-    .array(
-      z.object({
-        role: z.enum(["system", "user", "assistant"]),
-        content: z.string(),
-      }),
-    )
-    .optional(),
-});
+export const TaskPayloadSchema = z
+  .object({
+    prompt: z.string().optional(),
+    messages: z
+      .array(
+        z.object({
+          role: z.enum(["system", "user", "assistant"]),
+          content: z.string(),
+        }),
+      )
+      .optional(),
+  })
+  .refine(
+    (data) => data.prompt || (data.messages && data.messages.length > 0),
+    {
+      message: "Payload must have either prompt or messages",
+    },
+  );
 
 export type TaskPayload = z.infer<typeof TaskPayloadSchema>;
 
@@ -32,12 +39,5 @@ export interface TaskConstraints {
  * Parse and validate task payload from unknown input.
  */
 export function parseTaskPayload(input: unknown): TaskPayload {
-  const parsed = TaskPayloadSchema.parse(input);
-
-  // Must have either prompt or messages
-  if (!parsed.prompt && (!parsed.messages || parsed.messages.length === 0)) {
-    throw new Error("Payload must have either prompt or messages");
-  }
-
-  return parsed;
+  return TaskPayloadSchema.parse(input);
 }

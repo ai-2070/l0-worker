@@ -67,8 +67,10 @@ export const config = {
   /**
    * Skip HMAC auth validation.
    * Enabled by default for local, disabled for Vercel.
-   * Set SKIP_AUTH_VALIDATION=true to override.
+   * Set SKIP_AUTH_VALIDATION=true/false to override preset.
    */
   skipAuthValidation:
-    process.env.SKIP_AUTH_VALIDATION === "true" || preset.skipAuthValidation,
+    process.env.SKIP_AUTH_VALIDATION !== undefined
+      ? process.env.SKIP_AUTH_VALIDATION === "true"
+      : preset.skipAuthValidation,
 } as const;

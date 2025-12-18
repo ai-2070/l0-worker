@@ -4,7 +4,7 @@ import type { EventStore } from "./event-store.js";
 /**
  * In-memory event store implementation.
  * Events are lost on process restart.
- * Optionally implements LRU-style eviction when max tasks limit is reached.
+ * Optionally implements FIFO eviction when max tasks limit is reached.
  */
 export class MemoryEventStore implements EventStore {
   private events = new Map<string, OutboundEvent[]>();

@@ -9,6 +9,8 @@ export function sha256(content: string): string {
 
 /**
  * Recursively sort object keys for deterministic serialization.
+ * Only handles enumerable string keys (suitable for JSON-serializable data).
+ * Objects with toJSON (like Date) are passed through for JSON.stringify to handle.
  */
 function sortKeys(value: unknown): unknown {
   if (value === null || typeof value !== "object") {
@@ -16,6 +18,10 @@ function sortKeys(value: unknown): unknown {
   }
   if (Array.isArray(value)) {
     return value.map(sortKeys);
+  }
+  // Let JSON.stringify handle objects with toJSON (Date, etc.)
+  if (typeof (value as { toJSON?: unknown }).toJSON === "function") {
+    return value;
   }
   const sorted: Record<string, unknown> = {};
   for (const key of Object.keys(value as Record<string, unknown>).sort()) {

@@ -9,7 +9,7 @@ export class SlotManager {
   private _maxConcurrency: number;
 
   constructor(maxConcurrency: number) {
-    this._maxConcurrency = maxConcurrency;
+    this.maxConcurrency = maxConcurrency;
   }
 
   get maxConcurrency(): number {
@@ -46,17 +46,17 @@ export class SlotManager {
 
   /**
    * Try to acquire a slot for a task.
-   * Returns true if acquired, false if no slots available.
+   * @returns "acquired" if successful, "no_slots" if at capacity, "duplicate" if taskId already exists
    */
-  acquire(taskId: string): boolean {
-    if (!this.hasAvailableSlot()) {
-      return false;
-    }
+  acquire(taskId: string): "acquired" | "no_slots" | "duplicate" {
     if (this.slots.has(taskId)) {
-      return false; // Already has a slot
+      return "duplicate";
+    }
+    if (!this.hasAvailableSlot()) {
+      return "no_slots";
     }
     this.slots.set(taskId, { taskId, startedAt: Date.now() });
-    return true;
+    return "acquired";
   }
 
   /**

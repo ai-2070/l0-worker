@@ -4,6 +4,7 @@ import {
   SlotManager,
   executeOrder,
   parseTaskPayload,
+  OutputValidationError,
 } from "./executor/index.js";
 import { MemoryEventStore } from "./store/memory-store.js";
 import { Replayer, type ReplayResult } from "./replay/replayer.js";
@@ -119,7 +120,11 @@ export class VercelWorker {
     const payload = parseTaskPayload(taskSubmit.payload);
 
     // Acquire slot
-    if (!this.slots.acquire(taskId)) {
+    const slotResult = this.slots.acquire(taskId);
+    if (slotResult === "duplicate") {
+      throw new Error("Duplicate task ID");
+    }
+    if (slotResult === "no_slots") {
       throw new Error("No slots available");
     }
 
@@ -220,8 +225,7 @@ export class VercelWorker {
       };
       emit(failedEvent);
       await this.eventStore.record(taskId, failedEvent);
-
-      throw error;
+      // Don't re-throw - TASK_FAILED event is the proper error report
     } finally {
       // Clear drain timer if set
       if (drainTimer) {
@@ -255,12 +259,12 @@ function classifyError(error: unknown): FailureClass {
     return FailureClass.UNKNOWN;
   }
 
-  const message = error.message.toLowerCase();
-  const name = error.name.toLowerCase();
-
-  if (name === "outputvalidationerror") {
+  if (error instanceof OutputValidationError) {
     return FailureClass.INVALID_INPUT;
   }
+
+  const message = error.message.toLowerCase();
+  const name = error.name.toLowerCase();
   if (message.includes("abort") || name.includes("abort")) {
     return FailureClass.ABORTED;
   }

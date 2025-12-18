@@ -50,7 +50,7 @@ function secureCompare(a: string, b: string): boolean {
  * 3. Clock skew: issued_at not more than 5 seconds in future
  * 4. Signature: token matches HMAC-SHA256(secret, task_id|issued_at|ttl)
  *
- * If L0_AUTH_SECRET is not set, signature verification is skipped (dev mode).
+ * If skipAuthValidation is enabled (local dev), signature verification is skipped.
  * Token is validated once per invocation, never stored, never reused.
  *
  * @param auth - The auth envelope from the request

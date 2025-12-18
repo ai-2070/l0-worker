@@ -57,6 +57,17 @@ export default async function handler(
     return;
   }
 
+  // Early check for slot availability (non-authoritative, avoids SSE overhead)
+  // Actual slot acquisition happens atomically inside executeTaskWithEvents
+  if (!worker.hasAvailableSlot()) {
+    res.status(503).json({
+      error: "No slots available",
+      inflight: worker.inflightCount,
+      max: worker.maxConcurrency,
+    });
+    return;
+  }
+
   // Set up SSE
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -74,7 +85,7 @@ export default async function handler(
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
 
-    // Handle slot exhaustion with proper 503 response
+    // Handle errors via SSE (HTTP status already committed to 200)
     if (message === "No slots available") {
       res.write(
         `data: ${JSON.stringify({
@@ -83,6 +94,14 @@ export default async function handler(
           message,
           inflight: worker.inflightCount,
           max: worker.maxConcurrency,
+        })}\n\n`,
+      );
+    } else if (message === "Duplicate task ID") {
+      res.write(
+        `data: ${JSON.stringify({
+          type: "ERROR",
+          code: "DUPLICATE_TASK",
+          message,
         })}\n\n`,
       );
     } else {
