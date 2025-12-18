@@ -262,4 +262,4 @@ l0-worker/
 
 ## License
 
-PROPRIETARY
+Apache-2.0
