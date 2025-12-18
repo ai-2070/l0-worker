@@ -41,8 +41,3 @@ tmp/
 temp/
 *.tmp
 l0-docs/
-
-# Package managers
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
