@@ -104,23 +104,41 @@ impl Worker {
                         if let Some(event_type) = event.get("event").and_then(|v| v.as_str()) {
                             match event_type {
                                 "worker.ready" => {
-                                    let port =
-                                        event.get("port").and_then(|v| v.as_u64()).unwrap_or(0)
-                                            as u16;
-                                    let worker_id = event
-                                        .get("workerId")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
+                                    let port = match event.get("port").and_then(|v| v.as_u64()) {
+                                        Some(p) => p as u16,
+                                        None => {
+                                            tracing::warn!(
+                                                "worker.ready event missing 'port' field"
+                                            );
+                                            0
+                                        }
+                                    };
+                                    let worker_id =
+                                        match event.get("workerId").and_then(|v| v.as_str()) {
+                                            Some(id) => id.to_string(),
+                                            None => {
+                                                tracing::warn!(
+                                                    "worker.ready event missing 'workerId' field"
+                                                );
+                                                String::new()
+                                            }
+                                        };
                                     let _ = tx.send(WorkerEvent::Ready { port, worker_id }).await;
                                     continue;
                                 }
                                 "worker.draining" => {
-                                    let worker_id = event
+                                    let worker_id = match event
                                         .get("workerId")
                                         .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
+                                    {
+                                        Some(id) => id.to_string(),
+                                        None => {
+                                            tracing::warn!(
+                                                "worker.draining event missing 'workerId' field"
+                                            );
+                                            String::new()
+                                        }
+                                    };
                                     let _ = tx.send(WorkerEvent::Draining { worker_id }).await;
                                     continue;
                                 }
