@@ -184,8 +184,7 @@ impl Worker {
         if let Some(ref child) = self.child {
             if let Some(pid) = child.id() {
                 info!(worker_id = %self.config.worker_id, pid = pid, "Sending SIGTERM to worker");
-                kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
-                    .map_err(std::io::Error::other)?;
+                kill(Pid::from_raw(pid as i32), Signal::SIGTERM).map_err(std::io::Error::other)?;
             }
         }
         Ok(())
