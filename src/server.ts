@@ -8,7 +8,7 @@
 
 import { TaskSubmitSchema, TaskReplayRequestSchema, WorkerConfigUpdateSchema } from "./events/inbound.js";
 import { validateAuth } from "./auth/index.js";
-import { createWorkerInstance, getWorkerInstance } from "./worker-instance.js";
+import { createWorkerInstance } from "./worker-instance.js";
 import { config } from "./config.js";
 
 const port = Number(process.env.PORT) || 3000;
@@ -313,6 +313,7 @@ async function handleRequest(req: Request, server: { requestIP(req: Request): { 
 }
 
 // Start the server
+// @ts-expect-error Bun global is available at runtime when run with Bun
 const server = Bun.serve({
   port,
   fetch: handleRequest,
