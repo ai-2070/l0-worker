@@ -26,7 +26,12 @@ console.log(`mode=${mode} auth=${authStatus}`);
  * Handle POST /api/submit - Task execution with SSE streaming
  */
 async function handleSubmit(req: Request): Promise<Response> {
-  const body = await req.json();
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
 
   // Parse and validate request
   const parseResult = TaskSubmitSchema.safeParse(body);
@@ -132,7 +137,12 @@ function handleStatus(): Response {
  * Handle POST /api/replay - Replay recorded events
  */
 async function handleReplay(req: Request): Promise<Response> {
-  const body = await req.json();
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
 
   // Parse and validate request
   const parseResult = TaskReplayRequestSchema.safeParse(body);
@@ -201,7 +211,12 @@ async function handleReplay(req: Request): Promise<Response> {
  * Handle POST /api/config - Hot configuration update
  */
 async function handleConfig(req: Request): Promise<Response> {
-  const body = await req.json();
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
 
   // Parse and validate request
   const parseResult = WorkerConfigUpdateSchema.safeParse(body);
