@@ -1,12 +1,15 @@
+mod api;
 mod health;
 mod pool;
 mod worker;
 
+use api::AppState;
 use clap::Parser;
 use pool::{PoolConfig, PoolEvent, WorkerPool};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -25,6 +28,10 @@ struct Args {
     /// Starting port for workers (workers use sequential ports)
     #[arg(short = 'p', long, default_value_t = 3001)]
     base_port: u16,
+
+    /// Port for supervisor API server
+    #[arg(long, default_value_t = 9000)]
+    api_port: u16,
 
     /// Health check interval in milliseconds
     #[arg(long, default_value_t = 2000)]
@@ -120,18 +127,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create event channel for pool events
     let (pool_tx, mut pool_rx) = mpsc::channel::<PoolEvent>(32);
 
-    // Create and start worker pool
-    let mut pool = WorkerPool::new(config, pool_tx);
+    // Create broadcast channel for SSE clients
+    let (sse_tx, _sse_rx) = broadcast::channel::<PoolEvent>(64);
 
-    if let Err(e) = pool.start().await {
-        error!(error = %e, "Failed to start worker pool");
-        std::process::exit(1);
+    // Create and start worker pool
+    let pool = Arc::new(RwLock::new(WorkerPool::new(config, pool_tx)));
+
+    {
+        let mut pool_guard = pool.write().await;
+        if let Err(e) = pool_guard.start().await {
+            error!(error = %e, "Failed to start worker pool");
+            std::process::exit(1);
+        }
     }
 
-    // Spawn pool event handler
+    // Spawn pool event handler - logs and broadcasts to SSE clients
+    let sse_tx_clone = sse_tx.clone();
     let event_handler = tokio::spawn(async move {
         while let Some(event) = pool_rx.recv().await {
-            match event {
+            // Log the event
+            match &event {
                 PoolEvent::WorkerHealthy { worker_id, port } => {
                     info!(worker_id = %worker_id, port = port, "Worker healthy");
                 }
@@ -151,21 +166,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("Pool shutting down");
                 }
             }
+
+            // Broadcast to SSE clients (ignore if no subscribers)
+            let _ = sse_tx_clone.send(event);
+        }
+    });
+
+    // Start API server
+    let api_state = AppState {
+        pool: Arc::clone(&pool),
+        event_tx: sse_tx,
+    };
+    let api_port = args.api_port;
+    let api_server = tokio::spawn(async move {
+        if let Err(e) = api::start_server(api_state, api_port).await {
+            error!(error = %e, "API server error");
         }
     });
 
     // Handle shutdown signals
     let shutdown_timeout = Duration::from_millis(args.shutdown_timeout);
 
+    // Health check interval
+    let health_interval = Duration::from_millis(args.health_interval);
+    let poll_interval = Duration::from_millis(50); // Short poll for events
+
     tokio::select! {
-        _ = pool.run() => {
+        _ = async {
+            let mut health_ticker = tokio::time::interval(health_interval);
+            health_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                tokio::select! {
+                    // Health check timer
+                    _ = health_ticker.tick() => {
+                        pool.write().await.do_health_check().await;
+                    }
+
+                    // Poll for events frequently (short lock hold)
+                    _ = tokio::time::sleep(poll_interval) => {
+                        // Process all pending events
+                        while pool.write().await.try_recv_event().await {}
+                    }
+                }
+            }
+        } => {
             // Pool run exited (shouldn't happen normally)
             warn!("Pool run exited unexpectedly");
         }
 
         _ = tokio::signal::ctrl_c() => {
             info!("Received SIGINT, initiating graceful shutdown");
-            pool.shutdown(shutdown_timeout).await;
+            pool.write().await.shutdown(shutdown_timeout).await;
         }
 
         _ = async {
@@ -181,12 +233,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } => {
             info!("Received SIGTERM, initiating graceful shutdown");
-            pool.shutdown(shutdown_timeout).await;
+            pool.write().await.shutdown(shutdown_timeout).await;
         }
     }
 
     // Wait for event handler to finish
     event_handler.abort();
+    api_server.abort();
 
     info!("Supervisor exiting");
     Ok(())

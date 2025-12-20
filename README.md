@@ -311,14 +311,72 @@ cargo build --release
 - **Crash recovery** - Automatic restart with exponential backoff
 - **Hung worker detection** - Kill and restart workers that fail consecutive health checks
 - **Graceful shutdown** - Cross-platform via `/api/drain` endpoint
+- **Pool status API** - Query worker states for L1 routing
 - **Event streaming** - Pool lifecycle events for monitoring
+
+### Supervisor API
+
+The supervisor exposes a REST API for querying pool state:
+
+#### GET /api/pool
+
+Returns status of all workers in the pool.
+
+```bash
+curl http://localhost:9000/api/pool
+```
+
+Response:
+```json
+{
+  "workers": [
+    { "id": "l0-1", "port": 3001, "state": "healthy", "consecutive_failures": 0 },
+    { "id": "l0-2", "port": 3002, "state": "healthy", "consecutive_failures": 0 },
+    { "id": "l0-3", "port": 3003, "state": "starting", "consecutive_failures": 0 }
+  ],
+  "healthy_count": 2,
+  "total_count": 3
+}
+```
+
+Worker states: `starting`, `healthy`, `draining`, `failed`, `stopped`
+
+#### GET /api/pool/events (SSE)
+
+Real-time event stream for worker lifecycle changes. L1 can subscribe once and receive instant notifications.
+
+```bash
+curl -N http://localhost:9000/api/pool/events
+```
+
+Events:
+```
+event: worker_healthy
+data: {"id":"l0-1","port":3001}
+
+event: worker_unhealthy
+data: {"id":"l0-2","reason":"health check failed"}
+
+event: worker_restarting
+data: {"id":"l0-2","attempt":1}
+
+event: worker_failed
+data: {"id":"l0-2"}
+
+event: all_workers_healthy
+data: {}
+
+event: shutting_down
+data: {}
+```
 
 ### Supervisor CLI Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-w, --workers` | Number of workers | CPU count |
-| `-p, --base-port` | Starting port | 3001 |
+| `-p, --base-port` | Starting port for workers | 3001 |
+| `--api-port` | Supervisor API port | 9000 |
 | `--health-interval` | Health check interval (ms) | 2000 |
 | `--health-timeout` | Health check timeout (ms) | 2000 |
 | `--restart-delay` | Initial restart delay (ms) | 500 |

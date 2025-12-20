@@ -179,7 +179,7 @@ impl WorkerPool {
         Ok(())
     }
 
-    /// Run the pool's event loop
+    /// Run the pool's event loop (blocks forever)
     pub async fn run(&mut self) {
         let mut health_interval = tokio::time::interval(self.config.health_interval);
 
@@ -197,6 +197,24 @@ impl WorkerPool {
                 }
             }
         }
+    }
+
+    /// Try to receive and handle a single worker event
+    /// Returns true if an event was processed, false if no event available
+    pub async fn try_recv_event(&mut self) -> bool {
+        match self.event_rx.try_recv() {
+            Ok(event) => {
+                self.handle_worker_event(event).await;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Run health checks and process restarts
+    pub async fn do_health_check(&mut self) {
+        self.check_all_health().await;
+        self.process_restarts().await;
     }
 
     /// Handle a worker event
@@ -597,6 +615,34 @@ impl WorkerPool {
     pub fn worker_ports(&self) -> Vec<u16> {
         self.workers.values().map(|m| m.worker.port()).collect()
     }
+
+    /// Get status of all workers for API
+    pub fn get_workers_status(&self) -> Vec<WorkerStatus> {
+        self.workers
+            .iter()
+            .map(|(id, managed)| WorkerStatus {
+                id: id.clone(),
+                port: managed.worker.port(),
+                state: match &managed.state {
+                    WorkerState::Starting => "starting".to_string(),
+                    WorkerState::Healthy => "healthy".to_string(),
+                    WorkerState::Draining => "draining".to_string(),
+                    WorkerState::Failed { .. } => "failed".to_string(),
+                    WorkerState::Stopped => "stopped".to_string(),
+                },
+                consecutive_failures: managed.consecutive_failures,
+            })
+            .collect()
+    }
+}
+
+/// Worker status for API responses
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorkerStatus {
+    pub id: String,
+    pub port: u16,
+    pub state: String,
+    pub consecutive_failures: u32,
 }
 
 #[cfg(test)]
