@@ -330,6 +330,18 @@ fn get_worker_by_id(api_port: u16, worker_id: &str) -> Option<reqwest::blocking:
         .ok()
 }
 
+/// Wait for worker to become unavailable (stopped/crashed)
+fn wait_for_worker_down(port: u16, timeout: Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if get_worker_status(port).is_none() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
 /// Wait for supervisor API to be ready
 fn wait_for_supervisor_api(api_port: u16, timeout: Duration) -> bool {
     let start = std::time::Instant::now();
@@ -579,9 +591,8 @@ fn test_supervisor_api_drain_worker() {
     assert!(drain_result["message"].as_str().is_some());
 
     // Worker should eventually stop (drain triggers graceful shutdown)
-    std::thread::sleep(Duration::from_millis(6000)); // Wait for drain buffer
     assert!(
-        get_worker_status(base_port).is_none(),
+        wait_for_worker_down(base_port, Duration::from_secs(10)),
         "Worker should be down after drain"
     );
 
