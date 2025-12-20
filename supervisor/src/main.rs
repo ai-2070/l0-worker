@@ -61,6 +61,12 @@ struct Args {
     #[arg(long, default_value_t = 2)]
     max_unhealthy_checks: u32,
 
+    /// Maximum port number allowed for worker allocation.
+    /// Defaults to 49151 (end of registered ports range).
+    /// Set higher (up to 65535) to allow ephemeral ports.
+    #[arg(long, default_value_t = 49151)]
+    max_port: u16,
+
     /// Path to l0-worker binary
     #[arg(long, default_value = "./l0-worker")]
     worker_binary: PathBuf,
@@ -122,6 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
         anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
         env_vars: Vec::new(),
+        max_port: args.max_port,
     };
 
     // Create event channel for pool events

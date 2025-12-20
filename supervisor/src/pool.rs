@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 /// Worker state in the pool
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +52,10 @@ pub struct PoolConfig {
     pub openai_api_key: Option<String>,
     pub anthropic_api_key: Option<String>,
     pub env_vars: Vec<(String, String)>,
+    /// Maximum port number allowed for worker allocation.
+    /// Defaults to 49151 (end of registered ports range).
+    /// Set higher (up to 65535) to allow ephemeral ports.
+    pub max_port: u16,
 }
 
 impl Default for PoolConfig {
@@ -69,9 +74,34 @@ impl Default for PoolConfig {
             openai_api_key: None,
             anthropic_api_key: None,
             env_vars: Vec::new(),
+            max_port: DEFAULT_MAX_PORT,
         }
     }
 }
+
+/// Pool operation errors
+#[derive(Debug)]
+pub enum PoolError {
+    /// Worker not found
+    NotFound(String),
+    /// Internal error
+    Internal(String),
+}
+
+impl std::fmt::Display for PoolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PoolError::NotFound(msg) => write!(f, "{}", msg),
+            PoolError::Internal(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for PoolError {}
+
+/// Default maximum port number for worker allocation.
+/// Ports above this are in the dynamic/private range (ephemeral ports).
+const DEFAULT_MAX_PORT: u16 = 49151;
 
 /// Events emitted by the worker pool
 #[derive(Debug, Clone)]
@@ -104,14 +134,29 @@ impl WorkerPool {
     /// Create a new worker pool
     ///
     /// # Panics
-    /// Panics if base_port + worker_count - 1 would overflow u16
+    /// Panics if base_port + worker_count - 1 would overflow u16 or exceed max_port
     pub fn new(config: PoolConfig, pool_event_tx: mpsc::Sender<PoolEvent>) -> Self {
-        // Validate port range won't overflow
+        // Validate port range won't overflow and stays within valid port range
         if config.worker_count > 0 {
-            config
+            let highest_port = config
                 .base_port
                 .checked_add((config.worker_count - 1) as u16)
                 .expect("Port range overflow: base_port + worker_count exceeds u16::MAX");
+            assert!(
+                highest_port <= config.max_port,
+                "Port range exceeds max_port ({}): base_port {} + {} workers would use port {}",
+                config.max_port,
+                config.base_port,
+                config.worker_count,
+                highest_port
+            );
+        } else {
+            assert!(
+                config.base_port <= config.max_port,
+                "base_port {} exceeds max_port ({})",
+                config.base_port,
+                config.max_port
+            );
         }
 
         let (event_tx, event_rx) = mpsc::channel(100);
@@ -138,7 +183,7 @@ impl WorkerPool {
 
         for i in 0..self.config.worker_count {
             let port = self.config.base_port + i as u16;
-            let worker_id = format!("l0-{}", i + 1);
+            let worker_id = format!("l0-{}", Uuid::now_v7());
 
             self.spawn_worker(&worker_id, port).await?;
         }
@@ -634,6 +679,159 @@ impl WorkerPool {
             })
             .collect()
     }
+
+    /// Find the next available port starting from base_port,
+    /// staying within the configured max_port limit.
+    ///
+    /// Ports are searched sequentially from `base_port` up to `max_port`.
+    /// This ensures workers use predictable, sequential ports.
+    /// Gaps from killed workers are reused (e.g., if port 3002 is freed,
+    /// the next spawn will use 3002 before trying 3004).
+    fn next_available_port(&self) -> Result<u16, PoolError> {
+        let used_ports: std::collections::HashSet<u16> =
+            self.workers.values().map(|m| m.worker.port()).collect();
+
+        let mut port = self.config.base_port;
+        while used_ports.contains(&port) {
+            if port >= self.config.max_port {
+                return Err(PoolError::Internal(format!(
+                    "No available ports: all ports from {} to {} are in use ({} workers)",
+                    self.config.base_port,
+                    self.config.max_port,
+                    used_ports.len()
+                )));
+            }
+            port = port
+                .checked_add(1)
+                .ok_or_else(|| PoolError::Internal("Port number overflow".to_string()))?;
+        }
+
+        // Validate the final port is within the allowed range
+        if port > self.config.max_port {
+            return Err(PoolError::Internal(format!(
+                "Port {} exceeds max_port ({})",
+                port, self.config.max_port
+            )));
+        }
+
+        Ok(port)
+    }
+
+    /// Spawn a new worker dynamically
+    pub async fn spawn_new_worker(&mut self) -> Result<(String, u16), Box<dyn std::error::Error>> {
+        let port = self.next_available_port()?;
+        debug_assert!(
+            port >= self.config.base_port && port <= self.config.max_port,
+            "next_available_port returned invalid port {}",
+            port
+        );
+
+        let worker_id = format!("l0-{}", Uuid::now_v7());
+
+        info!(worker_id = %worker_id, port = port, "Spawning new worker via API");
+
+        self.spawn_worker(&worker_id, port).await?;
+
+        Ok((worker_id, port))
+    }
+
+    /// Drain a specific worker (graceful shutdown)
+    ///
+    /// This operation is idempotent - draining an already stopped worker succeeds.
+    pub async fn drain_worker(&mut self, worker_id: &str) -> Result<(), PoolError> {
+        let managed = self
+            .workers
+            .get_mut(worker_id)
+            .ok_or_else(|| PoolError::NotFound(format!("Worker {} not found", worker_id)))?;
+
+        // Idempotent: if already stopped/draining, just update state and succeed
+        if !managed.worker.is_running() {
+            managed.state = WorkerState::Stopped;
+            return Ok(());
+        }
+
+        info!(worker_id = %worker_id, "Draining worker via API");
+
+        managed.state = WorkerState::Draining;
+        // Best-effort terminate - ignore errors if process already exited
+        let _ = managed.worker.terminate().await;
+
+        Ok(())
+    }
+
+    /// Force kill a specific worker
+    ///
+    /// This operation is idempotent - killing an already stopped worker succeeds.
+    pub async fn kill_worker(&mut self, worker_id: &str) -> Result<(), PoolError> {
+        let managed = self
+            .workers
+            .get_mut(worker_id)
+            .ok_or_else(|| PoolError::NotFound(format!("Worker {} not found", worker_id)))?;
+
+        // Idempotent: if already stopped, just ensure state is correct and succeed
+        if !managed.worker.is_running() {
+            managed.state = WorkerState::Stopped;
+            return Ok(());
+        }
+
+        info!(worker_id = %worker_id, "Killing worker via API");
+
+        // Best-effort kill - ignore errors if process already exited
+        let _ = managed.worker.kill().await;
+        managed.state = WorkerState::Stopped;
+
+        Ok(())
+    }
+
+    /// Restart a specific worker (drain + spawn new)
+    pub async fn restart_worker(&mut self, worker_id: &str) -> Result<(String, u16), PoolError> {
+        let port = {
+            let managed = self
+                .workers
+                .get_mut(worker_id)
+                .ok_or_else(|| PoolError::NotFound(format!("Worker {} not found", worker_id)))?;
+
+            if managed.worker.is_running() {
+                info!(worker_id = %worker_id, "Terminating worker for restart");
+                let _ = managed.worker.terminate().await;
+                // Wait briefly for graceful termination
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if managed.worker.is_running() {
+                    let _ = managed.worker.kill().await;
+                }
+                // Wait for process exit with timeout to prevent hanging
+                let _ = tokio::time::timeout(Duration::from_secs(5), managed.worker.wait()).await;
+            }
+
+            managed.worker.port()
+        };
+
+        // Spawn new worker on same port before removing old entry
+        // This ensures we don't lose track of the port if spawn fails
+        let new_worker_id = format!("l0-{}", Uuid::now_v7());
+        info!(old_id = %worker_id, new_id = %new_worker_id, port = port, "Restarting worker via API");
+
+        match self.spawn_worker(&new_worker_id, port).await {
+            Ok(()) => {
+                // Only remove old worker after successful spawn
+                self.workers.remove(worker_id);
+                Ok((new_worker_id, port))
+            }
+            Err(e) => {
+                // Mark old worker as failed so it can be retried
+                if let Some(managed) = self.workers.get_mut(worker_id) {
+                    managed.state = WorkerState::Failed {
+                        restart_at: Instant::now() + self.config.restart_delay,
+                    };
+                    managed.consecutive_failures += 1;
+                }
+                Err(PoolError::Internal(format!(
+                    "Failed to spawn replacement worker: {}",
+                    e
+                )))
+            }
+        }
+    }
 }
 
 /// Worker status for API responses
@@ -664,6 +862,7 @@ mod tests {
             openai_api_key: None,
             anthropic_api_key: None,
             env_vars: Vec::new(),
+            max_port: super::DEFAULT_MAX_PORT,
         }
     }
 
@@ -766,5 +965,92 @@ mod tests {
             restart_at: Instant::now(),
         };
         assert!(matches!(failed1, WorkerState::Failed { .. }));
+    }
+
+    #[test]
+    fn test_port_validation_valid_range() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 10,
+            base_port: 3001,
+            ..Default::default()
+        };
+        // Should not panic - ports 3001-3010 are valid
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    fn test_port_validation_at_max_port() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 1,
+            base_port: super::DEFAULT_MAX_PORT,
+            ..Default::default()
+        };
+        // Should not panic - port 49151 is exactly at max_port
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    #[should_panic(expected = "Port range exceeds max_port")]
+    fn test_port_validation_exceeds_max_port() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 10,
+            base_port: super::DEFAULT_MAX_PORT - 5, // Would need ports 49146-49155, exceeding max_port
+            ..Default::default()
+        };
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    #[should_panic(expected = "base_port")]
+    fn test_port_validation_base_port_above_max() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 1,
+            base_port: super::DEFAULT_MAX_PORT + 1,
+            ..Default::default()
+        };
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    fn test_port_validation_zero_workers() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 0,
+            base_port: 3001,
+            ..Default::default()
+        };
+        // Should not panic - zero workers is valid
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    fn test_port_validation_custom_max_port() {
+        let (tx, _rx) = mpsc::channel(1);
+        // Allow ephemeral ports by setting max_port higher
+        let config = PoolConfig {
+            worker_count: 10,
+            base_port: 50000,
+            max_port: 65535,
+            ..Default::default()
+        };
+        // Should not panic - ephemeral ports allowed with custom max_port
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    #[should_panic(expected = "Port range exceeds max_port")]
+    fn test_port_validation_custom_max_port_exceeded() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 10,
+            base_port: 50000,
+            max_port: 50005, // Only allows ports 50000-50005, but we need 50000-50009
+            ..Default::default()
+        };
+        let _pool = WorkerPool::new(config, tx);
     }
 }
