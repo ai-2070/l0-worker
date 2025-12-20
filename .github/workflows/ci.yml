@@ -71,17 +71,13 @@ jobs:
         working-directory: supervisor
         run: cargo clippy -- -D warnings
 
-      - name: Run supervisor unit tests
-        working-directory: supervisor
-        run: cargo test --lib
-
       - name: Build supervisor (debug)
         working-directory: supervisor
         run: cargo build
 
-      - name: Run supervisor integration tests
+      - name: Run supervisor tests
         working-directory: supervisor
-        run: cargo test --test integration -- --test-threads=1
+        run: cargo test -- --test-threads=1
 
       - name: Build supervisor (release)
         working-directory: supervisor
