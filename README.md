@@ -341,35 +341,6 @@ Response:
 
 Worker states: `starting`, `healthy`, `draining`, `failed`, `stopped`
 
-#### GET /api/pool/events (SSE)
-
-Real-time event stream for worker lifecycle changes. L1 can subscribe once and receive instant notifications.
-
-```bash
-curl -N http://localhost:9000/api/pool/events
-```
-
-Events:
-```
-event: worker_healthy
-data: {"id":"l0-1","port":3001}
-
-event: worker_unhealthy
-data: {"id":"l0-2","reason":"health check failed"}
-
-event: worker_restarting
-data: {"id":"l0-2","attempt":1}
-
-event: worker_failed
-data: {"id":"l0-2"}
-
-event: all_workers_healthy
-data: {}
-
-event: shutting_down
-data: {}
-```
-
 ### Supervisor CLI Options
 
 | Option | Description | Default |
