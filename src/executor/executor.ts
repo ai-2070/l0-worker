@@ -1,4 +1,4 @@
-import { l0, structured } from "@ai2070/l0";
+import { l0 } from "@ai2070/l0";
 import { streamText, streamObject } from "ai";
 import type { CoreMessage } from "ai";
 import { jsonSchema } from "ai";
@@ -161,6 +161,8 @@ async function executeText(
 
 /**
  * Execute structured output with L0 runtime.
+ * Uses streamObject from AI SDK which handles JSON parsing/validation,
+ * wrapped with L0 for retry, fallback, and reliability features.
  */
 async function executeStructured(
   primaryModel: ModelSpec,
@@ -172,11 +174,16 @@ async function executeStructured(
 ): Promise<ExecutionResult> {
   const params = primaryModel.params ?? {};
   let firstTokenEmitted = false;
+  let content = "";
+  let tokenCount = 0;
 
-  const result = await structured({
-    schema: jsonSchema(outputSpec.schema),
-    stream: () =>
-      streamObject({
+  // Store reference to streamObject result to access .object promise later
+  let streamObjectResult: Awaited<ReturnType<typeof streamObject>> | null =
+    null;
+
+  const result = await l0({
+    stream: () => {
+      const res = streamObject({
         model: getModel(primaryModel),
         messages,
         schema: jsonSchema(outputSpec.schema),
@@ -185,13 +192,16 @@ async function executeStructured(
         topP: params.topP as number | undefined,
         frequencyPenalty: params.frequencyPenalty as number | undefined,
         presencePenalty: params.presencePenalty as number | undefined,
-      }),
+      });
+      streamObjectResult = res;
+      return res;
+    },
 
     // Fallback streams
     fallbackStreams: execution.fallbacks?.map((fb) => {
       const fbParams = fb.model.params ?? {};
-      return () =>
-        streamObject({
+      return () => {
+        const res = streamObject({
           model: getModel(fb.model),
           messages,
           schema: jsonSchema(outputSpec.schema),
@@ -201,36 +211,69 @@ async function executeStructured(
           frequencyPenalty: fbParams.frequencyPenalty as number | undefined,
           presencePenalty: fbParams.presencePenalty as number | undefined,
         });
+        streamObjectResult = res;
+        return res;
+      };
     }),
 
     // Retry configuration
     retry: mapRetrySpec(execution.retry),
 
-    // Auto-correct JSON if not strict
-    autoCorrect: !(outputSpec.strict ?? true),
-
     // Pass through meta for L0 event context
     meta,
 
-    // Forward all L0 events to L1, trigger onFirstToken on first data event
+    // Forward all L0 events to L1
     onEvent: (event: L0Event) => {
-      if (!firstTokenEmitted && event.type === "object-part") {
-        firstTokenEmitted = true;
-        callbacks?.onFirstToken?.();
-      }
       callbacks?.onL0Event?.(event);
     },
   });
 
-  const content = JSON.stringify(result.data);
+  // Consume stream to collect tokens
+  for await (const event of result.stream) {
+    if (event.type === "token" && event.value) {
+      if (!firstTokenEmitted) {
+        firstTokenEmitted = true;
+        callbacks?.onFirstToken?.();
+      }
+      content += event.value;
+      tokenCount++;
+      callbacks?.onToken?.(event.value);
+    }
+  }
+
+  // Get the validated object from streamObject result
+  // streamObject already validates against the schema
+  let validatedOutput: unknown;
+  if (streamObjectResult) {
+    try {
+      validatedOutput = await streamObjectResult.object;
+    } catch (objectError) {
+      // If object parsing fails, fall back to parsing the collected content
+      try {
+        validatedOutput = JSON.parse(content);
+      } catch (parseError) {
+        throw new OutputValidationError(
+          `Failed to parse structured output: ${parseError instanceof Error ? parseError.message : "Invalid JSON"}`,
+        );
+      }
+    }
+  } else {
+    try {
+      validatedOutput = JSON.parse(content);
+    } catch (parseError) {
+      throw new OutputValidationError(
+        `Failed to parse structured output: ${parseError instanceof Error ? parseError.message : "Invalid JSON"}`,
+      );
+    }
+  }
 
   return {
-    content,
-    tokenCount: result.state?.tokenCount ?? 0,
-    inputTokens: result.state?.inputTokens ?? 0,
-    outputTokens: result.state?.outputTokens ?? 0,
+    content: JSON.stringify(validatedOutput),
+    tokenCount,
+    inputTokens: result.state.inputTokens ?? 0,
+    outputTokens: result.state.outputTokens ?? tokenCount,
     modelUsed: primaryModel,
-    validatedOutput: result.data,
+    validatedOutput,
   };
 }
 
