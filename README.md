@@ -309,6 +309,7 @@ cargo build --release
 - **Process pool management** - Spawn and manage multiple worker processes
 - **Health checking** - Periodic HTTP health checks via `/api/status`
 - **Crash recovery** - Automatic restart with exponential backoff
+- **Hung worker detection** - Kill and restart workers that fail consecutive health checks
 - **Graceful shutdown** - Cross-platform via `/api/drain` endpoint
 - **Event streaming** - Pool lifecycle events for monitoring
 
@@ -323,6 +324,7 @@ cargo build --release
 | `--restart-delay` | Initial restart delay (ms) | 1000 |
 | `--max-restart-delay` | Max restart delay (ms) | 30000 |
 | `--max-failures` | Max consecutive failures before stopping | 5 |
+| `--max-unhealthy-checks` | Max consecutive unhealthy checks before killing | 3 |
 | `--shutdown-timeout` | Graceful shutdown timeout (ms) | 30000 |
 
 ### Building the Supervisor
