@@ -296,6 +296,40 @@ fn restart_worker_api(api_port: u16, worker_id: &str) -> Option<serde_json::Valu
         .ok()
 }
 
+/// Drain a worker via supervisor API
+fn drain_worker_api(api_port: u16, worker_id: &str) -> Option<serde_json::Value> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    client
+        .post(format!(
+            "http://127.0.0.1:{}/workers/{}/drain",
+            api_port, worker_id
+        ))
+        .send()
+        .ok()?
+        .json()
+        .ok()
+}
+
+/// Get a single worker by ID via supervisor API
+fn get_worker_by_id(api_port: u16, worker_id: &str) -> Option<reqwest::blocking::Response> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+
+    client
+        .get(format!(
+            "http://127.0.0.1:{}/workers/{}",
+            api_port, worker_id
+        ))
+        .send()
+        .ok()
+}
+
 /// Wait for supervisor API to be ready
 fn wait_for_supervisor_api(api_port: u16, timeout: Duration) -> bool {
     let start = std::time::Instant::now();
@@ -510,6 +544,109 @@ fn test_supervisor_api_restart_worker() {
     let _ = supervisor.kill();
     let _ = supervisor.wait();
     cleanup_ports(base_port, 2);
+}
+
+#[test]
+fn test_supervisor_api_drain_worker() {
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4090;
+    let api_port = 9090;
+    cleanup_ports(base_port, 1);
+
+    let mut supervisor = start_supervisor_with_api(1, base_port, api_port);
+
+    // Wait for worker
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Worker should be healthy"
+    );
+
+    // Get worker ID
+    let workers = get_workers_list(api_port).expect("Should get workers list");
+    let worker_id = workers["workers"][0]["id"].as_str().unwrap();
+
+    // Drain the worker via API
+    let drain_result = drain_worker_api(api_port, worker_id).expect("Should drain worker");
+    assert!(drain_result["success"].as_bool().unwrap_or(false));
+    assert!(drain_result["message"].as_str().is_some());
+
+    // Worker should eventually stop (drain triggers graceful shutdown)
+    std::thread::sleep(Duration::from_millis(6000)); // Wait for drain buffer
+    assert!(
+        get_worker_status(base_port).is_none(),
+        "Worker should be down after drain"
+    );
+
+    // Test idempotency - draining again should not error
+    let drain_result2 = drain_worker_api(api_port, worker_id);
+    assert!(
+        drain_result2.is_some(),
+        "Draining already-drained worker should succeed (idempotent)"
+    );
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 1);
+}
+
+#[test]
+fn test_supervisor_api_get_worker_by_id() {
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4080;
+    let api_port = 9080;
+    cleanup_ports(base_port, 1);
+
+    let mut supervisor = start_supervisor_with_api(1, base_port, api_port);
+
+    // Wait for worker
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Worker should be healthy"
+    );
+
+    // Get worker ID from list
+    let workers = get_workers_list(api_port).expect("Should get workers list");
+    let worker_id = workers["workers"][0]["id"].as_str().unwrap();
+
+    // Get single worker by ID
+    let response = get_worker_by_id(api_port, worker_id).expect("Should get response");
+    assert!(response.status().is_success(), "Should return 200 OK");
+
+    let worker: serde_json::Value = response.json().expect("Should parse JSON");
+    assert_eq!(worker["id"].as_str().unwrap(), worker_id);
+    assert_eq!(worker["port"].as_u64().unwrap() as u16, base_port);
+    assert!(worker["state"].as_str().is_some());
+
+    // Test not found case
+    let not_found_response =
+        get_worker_by_id(api_port, "nonexistent-worker").expect("Should get response");
+    assert_eq!(
+        not_found_response.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "Should return 404 for unknown worker"
+    );
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 1);
 }
 
 #[test]

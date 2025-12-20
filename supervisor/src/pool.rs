@@ -84,8 +84,6 @@ impl Default for PoolConfig {
 pub enum PoolError {
     /// Worker not found
     NotFound(String),
-    /// Worker is not running
-    NotRunning(String),
     /// Internal error
     Internal(String),
 }
@@ -94,7 +92,6 @@ impl std::fmt::Display for PoolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PoolError::NotFound(msg) => write!(f, "{}", msg),
-            PoolError::NotRunning(msg) => write!(f, "{}", msg),
             PoolError::Internal(msg) => write!(f, "{}", msg),
         }
     }
@@ -683,29 +680,52 @@ impl WorkerPool {
             .collect()
     }
 
-    /// Find the next available port
-    /// Maximum port number to use (stay within ephemeral port range)
-    const MAX_PORT: u16 = 49151;
-
+    /// Find the next available port starting from base_port,
+    /// staying within the configured max_port limit.
+    ///
+    /// Ports are searched sequentially from `base_port` up to `max_port`.
+    /// This ensures workers use predictable, sequential ports.
+    /// Gaps from killed workers are reused (e.g., if port 3002 is freed,
+    /// the next spawn will use 3002 before trying 3004).
     fn next_available_port(&self) -> Result<u16, PoolError> {
         let used_ports: std::collections::HashSet<u16> =
             self.workers.values().map(|m| m.worker.port()).collect();
 
         let mut port = self.config.base_port;
         while used_ports.contains(&port) {
-            if port >= Self::MAX_PORT {
-                return Err(PoolError::Internal(
-                    "No available ports in allowed range".to_string(),
-                ));
+            if port >= self.config.max_port {
+                return Err(PoolError::Internal(format!(
+                    "No available ports: all ports from {} to {} are in use ({} workers)",
+                    self.config.base_port,
+                    self.config.max_port,
+                    used_ports.len()
+                )));
             }
-            port += 1;
+            port = port
+                .checked_add(1)
+                .ok_or_else(|| PoolError::Internal("Port number overflow".to_string()))?;
         }
+
+        // Validate the final port is within the allowed range
+        if port > self.config.max_port {
+            return Err(PoolError::Internal(format!(
+                "Port {} exceeds max_port ({})",
+                port, self.config.max_port
+            )));
+        }
+
         Ok(port)
     }
 
     /// Spawn a new worker dynamically
     pub async fn spawn_new_worker(&mut self) -> Result<(String, u16), Box<dyn std::error::Error>> {
         let port = self.next_available_port()?;
+        debug_assert!(
+            port >= self.config.base_port && port <= self.config.max_port,
+            "next_available_port returned invalid port {}",
+            port
+        );
+
         let worker_id = format!("l0-{}", Uuid::now_v7());
 
         info!(worker_id = %worker_id, port = port, "Spawning new worker via API");
@@ -786,18 +806,31 @@ impl WorkerPool {
             managed.worker.port()
         };
 
-        // Remove old worker
-        self.workers.remove(worker_id);
-
-        // Spawn new worker on same port
+        // Spawn new worker on same port before removing old entry
+        // This ensures we don't lose track of the port if spawn fails
         let new_worker_id = format!("l0-{}", Uuid::now_v7());
         info!(old_id = %worker_id, new_id = %new_worker_id, port = port, "Restarting worker via API");
 
-        self.spawn_worker(&new_worker_id, port).await.map_err(|e| {
-            PoolError::Internal(format!("Failed to spawn replacement worker: {}", e))
-        })?;
-
-        Ok((new_worker_id, port))
+        match self.spawn_worker(&new_worker_id, port).await {
+            Ok(()) => {
+                // Only remove old worker after successful spawn
+                self.workers.remove(worker_id);
+                Ok((new_worker_id, port))
+            }
+            Err(e) => {
+                // Mark old worker as failed so it can be retried
+                if let Some(managed) = self.workers.get_mut(worker_id) {
+                    managed.state = WorkerState::Failed {
+                        restart_at: Instant::now() + self.config.restart_delay,
+                    };
+                    managed.consecutive_failures += 1;
+                }
+                Err(PoolError::Internal(format!(
+                    "Failed to spawn replacement worker: {}",
+                    e
+                )))
+            }
+        }
     }
 }
 

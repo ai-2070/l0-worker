@@ -18,7 +18,6 @@ use crate::pool::{PoolError, PoolEvent, WorkerPool, WorkerStatus};
 fn pool_error_to_status(err: &PoolError) -> StatusCode {
     match err {
         PoolError::NotFound(_) => StatusCode::NOT_FOUND,
-        PoolError::NotRunning(_) => StatusCode::CONFLICT,
         PoolError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

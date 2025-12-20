@@ -348,6 +348,18 @@ Get a single worker's status.
 curl http://localhost:9000/workers/l0-019400a1-2b3c-7def-8901-234567890abc
 ```
 
+Response:
+```json
+{
+  "id": "l0-019400a1-2b3c-7def-8901-234567890abc",
+  "port": 3001,
+  "state": "healthy",
+  "consecutive_failures": 0
+}
+```
+
+Returns 404 if the worker is not found.
+
 #### GET /workers/events (SSE)
 
 Real-time event stream for worker lifecycle changes.
@@ -398,12 +410,28 @@ Gracefully drain a worker (sends shutdown signal, waits for in-flight requests).
 curl -X POST http://localhost:9000/workers/l0-019400a1-2b3c-7def-8901-234567890abc/drain
 ```
 
+Response:
+```json
+{
+  "success": true,
+  "message": "Worker l0-019400a1-2b3c-7def-8901-234567890abc drain initiated"
+}
+```
+
 #### POST /workers/:id/kill
 
 Force kill a worker immediately.
 
 ```bash
 curl -X POST http://localhost:9000/workers/l0-019400a1-2b3c-7def-8901-234567890abc/kill
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Worker l0-019400a1-2b3c-7def-8901-234567890abc killed"
+}
 ```
 
 #### POST /workers/:id/restart
