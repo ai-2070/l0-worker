@@ -27,7 +27,10 @@ pub enum WorkerState {
 struct ManagedWorker {
     worker: Worker,
     state: WorkerState,
+    /// Consecutive restart failures (process crashed)
     consecutive_failures: u32,
+    /// Consecutive unhealthy health checks (process running but unhealthy)
+    consecutive_unhealthy: u32,
     last_healthy: Option<Instant>,
 }
 
@@ -42,6 +45,8 @@ pub struct PoolConfig {
     pub restart_delay: Duration,
     pub max_restart_delay: Duration,
     pub max_consecutive_failures: u32,
+    /// Max consecutive unhealthy health checks before killing and restarting worker
+    pub max_unhealthy_checks: u32,
     pub auth_secret: Option<String>,
     pub openai_api_key: Option<String>,
     pub anthropic_api_key: Option<String>,
@@ -59,6 +64,7 @@ impl Default for PoolConfig {
             restart_delay: Duration::from_secs(1),
             max_restart_delay: Duration::from_secs(30),
             max_consecutive_failures: 5,
+            max_unhealthy_checks: 3,
             auth_secret: None,
             openai_api_key: None,
             anthropic_api_key: None,
@@ -165,6 +171,7 @@ impl WorkerPool {
                 worker,
                 state: WorkerState::Starting,
                 consecutive_failures: 0,
+                consecutive_unhealthy: 0,
                 last_healthy: None,
             },
         );
@@ -317,6 +324,9 @@ impl WorkerPool {
             match result {
                 HealthCheckResult::Healthy(_status) => {
                     if let Some(managed) = self.workers.get_mut(&worker_id) {
+                        // Reset unhealthy counter on successful health check
+                        managed.consecutive_unhealthy = 0;
+
                         if managed.state == WorkerState::Starting {
                             managed.state = WorkerState::Healthy;
                             managed.last_healthy = Some(Instant::now());
@@ -339,15 +349,6 @@ impl WorkerPool {
                         // Check if the worker process is still running
                         let is_running = managed.worker.is_running();
 
-                        if managed.state == WorkerState::Healthy {
-                            warn!(
-                                worker_id = %worker_id,
-                                reason = %reason,
-                                is_running = is_running,
-                                "Worker became unhealthy"
-                            );
-                        }
-
                         // If worker process crashed, schedule restart
                         if !is_running
                             && !matches!(managed.state, WorkerState::Failed { .. })
@@ -359,6 +360,7 @@ impl WorkerPool {
                             );
 
                             managed.consecutive_failures += 1;
+                            managed.consecutive_unhealthy = 0;
                             let failures = managed.consecutive_failures;
 
                             // Send unhealthy event first for consistency with Exited handler
@@ -397,6 +399,78 @@ impl WorkerPool {
                                         worker_id: worker_id.clone(),
                                     })
                                     .await;
+                            }
+                        } else if is_running && managed.state == WorkerState::Healthy {
+                            // Worker is running but unhealthy - track consecutive failures
+                            managed.consecutive_unhealthy += 1;
+
+                            warn!(
+                                worker_id = %worker_id,
+                                reason = %reason,
+                                consecutive_unhealthy = managed.consecutive_unhealthy,
+                                max_unhealthy = self.config.max_unhealthy_checks,
+                                "Worker health check failed"
+                            );
+
+                            // If too many consecutive unhealthy checks, kill and restart
+                            if managed.consecutive_unhealthy >= self.config.max_unhealthy_checks {
+                                error!(
+                                    worker_id = %worker_id,
+                                    consecutive_unhealthy = managed.consecutive_unhealthy,
+                                    "Worker exceeded max unhealthy checks, killing process"
+                                );
+
+                                let _ = self
+                                    .pool_event_tx
+                                    .send(PoolEvent::WorkerUnhealthy {
+                                        worker_id: worker_id.clone(),
+                                        reason: format!(
+                                            "Exceeded {} consecutive unhealthy checks: {}",
+                                            self.config.max_unhealthy_checks, reason
+                                        ),
+                                    })
+                                    .await;
+
+                                // Kill the worker process
+                                if let Err(e) = managed.worker.kill().await {
+                                    error!(worker_id = %worker_id, error = %e, "Failed to kill unhealthy worker");
+                                }
+
+                                // Schedule restart
+                                managed.consecutive_failures += 1;
+                                managed.consecutive_unhealthy = 0;
+                                let failures = managed.consecutive_failures;
+
+                                if failures <= self.config.max_consecutive_failures {
+                                    let delay = Self::calculate_restart_delay_static(
+                                        &self.config,
+                                        failures,
+                                    );
+                                    managed.state = WorkerState::Failed {
+                                        restart_at: Instant::now() + delay,
+                                    };
+
+                                    let _ = self
+                                        .pool_event_tx
+                                        .send(PoolEvent::WorkerRestarting {
+                                            worker_id: worker_id.clone(),
+                                            attempt: failures,
+                                        })
+                                        .await;
+                                } else {
+                                    managed.state = WorkerState::Stopped;
+                                    error!(
+                                        worker_id = %worker_id,
+                                        failures = failures,
+                                        "Worker exceeded max restart attempts"
+                                    );
+                                    let _ = self
+                                        .pool_event_tx
+                                        .send(PoolEvent::WorkerFailed {
+                                            worker_id: worker_id.clone(),
+                                        })
+                                        .await;
+                                }
                             }
                         }
                     }
@@ -486,7 +560,7 @@ impl WorkerPool {
             if all_stopped {
                 info!("All workers stopped");
                 // Reap all child processes
-                for (_worker_id, managed) in &mut self.workers {
+                for managed in self.workers.values_mut() {
                     let _ = managed.worker.wait().await;
                 }
                 return;
@@ -506,7 +580,7 @@ impl WorkerPool {
         }
 
         // Reap all child processes
-        for (_worker_id, managed) in &mut self.workers {
+        for managed in self.workers.values_mut() {
             let _ = managed.worker.wait().await;
         }
     }
@@ -539,6 +613,7 @@ mod tests {
             restart_delay: Duration::from_millis(restart_delay_ms),
             max_restart_delay: Duration::from_millis(max_restart_delay_ms),
             max_consecutive_failures: 5,
+            max_unhealthy_checks: 3,
             auth_secret: None,
             openai_api_key: None,
             anthropic_api_key: None,

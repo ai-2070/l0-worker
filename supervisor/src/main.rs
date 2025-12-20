@@ -50,6 +50,10 @@ struct Args {
     #[arg(long, default_value_t = 5)]
     max_failures: u32,
 
+    /// Maximum consecutive unhealthy health checks before killing a worker
+    #[arg(long, default_value_t = 3)]
+    max_unhealthy_checks: u32,
+
     /// Path to l0-worker binary
     #[arg(long, default_value = "./l0-worker")]
     worker_binary: PathBuf,
@@ -106,6 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         restart_delay: Duration::from_millis(args.restart_delay),
         max_restart_delay: Duration::from_millis(args.max_restart_delay),
         max_consecutive_failures: args.max_failures,
+        max_unhealthy_checks: args.max_unhealthy_checks,
         auth_secret: std::env::var("L0_AUTH_SECRET").ok(),
         openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
         anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").ok(),
