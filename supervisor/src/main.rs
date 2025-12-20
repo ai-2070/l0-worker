@@ -1,3 +1,4 @@
+mod api;
 mod health;
 mod pool;
 mod worker;
@@ -5,8 +6,9 @@ mod worker;
 use clap::Parser;
 use pool::{PoolConfig, PoolEvent, WorkerPool};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -25,6 +27,10 @@ struct Args {
     /// Starting port for workers (workers use sequential ports)
     #[arg(short = 'p', long, default_value_t = 3001)]
     base_port: u16,
+
+    /// Port for supervisor API server
+    #[arg(long, default_value_t = 9000)]
+    api_port: u16,
 
     /// Health check interval in milliseconds
     #[arg(long, default_value_t = 2000)]
@@ -121,11 +127,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (pool_tx, mut pool_rx) = mpsc::channel::<PoolEvent>(32);
 
     // Create and start worker pool
-    let mut pool = WorkerPool::new(config, pool_tx);
+    let pool = Arc::new(RwLock::new(WorkerPool::new(config, pool_tx)));
 
-    if let Err(e) = pool.start().await {
-        error!(error = %e, "Failed to start worker pool");
-        std::process::exit(1);
+    {
+        let mut pool_guard = pool.write().await;
+        if let Err(e) = pool_guard.start().await {
+            error!(error = %e, "Failed to start worker pool");
+            std::process::exit(1);
+        }
     }
 
     // Spawn pool event handler
@@ -154,18 +163,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Start API server
+    let api_pool = Arc::clone(&pool);
+    let api_port = args.api_port;
+    let api_server = tokio::spawn(async move {
+        if let Err(e) = api::start_server(api_pool, api_port).await {
+            error!(error = %e, "API server error");
+        }
+    });
+
     // Handle shutdown signals
     let shutdown_timeout = Duration::from_millis(args.shutdown_timeout);
 
+    // Health check interval for run_once
+    let health_interval = Duration::from_millis(args.health_interval);
+
     tokio::select! {
-        _ = pool.run() => {
+        _ = async {
+            loop {
+                // Acquire lock, do one iteration, release lock
+                // This allows API to read pool state between iterations
+                pool.write().await.run_once(health_interval).await;
+            }
+        } => {
             // Pool run exited (shouldn't happen normally)
             warn!("Pool run exited unexpectedly");
         }
 
         _ = tokio::signal::ctrl_c() => {
             info!("Received SIGINT, initiating graceful shutdown");
-            pool.shutdown(shutdown_timeout).await;
+            pool.write().await.shutdown(shutdown_timeout).await;
         }
 
         _ = async {
@@ -181,12 +208,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } => {
             info!("Received SIGTERM, initiating graceful shutdown");
-            pool.shutdown(shutdown_timeout).await;
+            pool.write().await.shutdown(shutdown_timeout).await;
         }
     }
 
     // Wait for event handler to finish
     event_handler.abort();
+    api_server.abort();
 
     info!("Supervisor exiting");
     Ok(())
