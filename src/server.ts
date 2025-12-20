@@ -295,18 +295,13 @@ async function handleDrain(req: Request, serverInterface: { requestIP(req: Reque
     if (!body.auth) {
       return Response.json({ error: "Auth required for non-localhost requests" }, { status: 401 });
     }
-    // Use worker_id from body, or fall back to current worker's ID
-    const targetWorkerId = body.worker_id || worker.workerId;
-    const authResult = validateAuth(body.auth, targetWorkerId);
+    // Always validate auth against this worker's ID to avoid leaking token validity
+    const authResult = validateAuth(body.auth, worker.workerId);
     if (!authResult.valid) {
       return Response.json(
         { error: "Auth validation failed", reason: authResult.reason },
         { status: 401 }
       );
-    }
-    // Verify worker ID matches if provided
-    if (body.worker_id && body.worker_id !== worker.workerId) {
-      return Response.json({ error: "Worker ID mismatch" }, { status: 400 });
     }
   }
 
