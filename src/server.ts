@@ -274,6 +274,32 @@ async function handleConfig(req: Request, server: { requestIP(req: Request): { a
 }
 
 /**
+ * Handle POST /api/drain - Trigger graceful shutdown
+ * Called by supervisor for cross-platform graceful shutdown.
+ * Only allowed from localhost.
+ */
+function handleDrain(req: Request, serverInterface: { requestIP(req: Request): { address: string } | null }): Response {
+  // Only allow from localhost
+  if (!isLocalhost(req, serverInterface)) {
+    return Response.json({ error: "Drain only allowed from localhost" }, { status: 403 });
+  }
+
+  console.log(JSON.stringify({ event: "worker.draining", workerId: worker.workerId }));
+
+  // Trigger graceful shutdown after a short delay to allow response to be sent
+  setTimeout(() => {
+    process.exit(0);
+  }, config.drainBufferMs);
+
+  return Response.json({
+    success: true,
+    message: "Drain initiated",
+    workerId: worker.workerId,
+    drainBufferMs: config.drainBufferMs,
+  });
+}
+
+/**
  * Main request router
  */
 async function handleRequest(req: Request, server: { requestIP(req: Request): { address: string } | null }): Promise<Response> {
@@ -299,8 +325,12 @@ async function handleRequest(req: Request, server: { requestIP(req: Request): { 
       return await handleConfig(req, server);
     }
 
+    if (path === "/api/drain" && method === "POST") {
+      return handleDrain(req, server);
+    }
+
     // Method not allowed for known paths
-    if (["/api/submit", "/api/status", "/api/replay", "/api/config"].includes(path)) {
+    if (["/api/submit", "/api/status", "/api/replay", "/api/config", "/api/drain"].includes(path)) {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
     }
 

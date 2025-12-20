@@ -111,6 +111,26 @@ curl -X POST http://localhost:3000/api/config \
   }'
 ```
 
+### POST /api/drain
+
+Trigger graceful shutdown (localhost only). Used by supervisor for cross-platform graceful shutdown.
+
+```bash
+curl -X POST http://localhost:3000/api/drain
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Drain initiated",
+  "workerId": "...",
+  "drainBufferMs": 5000
+}
+```
+
+The worker will emit `worker.draining` event and exit after `drainBufferMs` milliseconds.
+
 ## 📋 Inference Order
 
 Every task submission requires an `order` that defines execution and output contract:
@@ -256,6 +276,48 @@ All variables override preset defaults:
 | `L0_AUTH_SECRET` | Shared secret for HMAC auth (required in production) |
 | `OPENAI_API_KEY` | OpenAI API key |
 
+## 🖥️ Supervisor (Multi-Worker Pool)
+
+For running multiple workers with automatic health checking and crash recovery, use the Rust supervisor:
+
+```bash
+cd supervisor
+cargo build --release
+
+# Run 4 workers starting at port 3001
+./target/release/l0-supervisor -w 4 -p 3001 ./path/to/l0-worker
+```
+
+### Supervisor Features
+
+- **Process pool management** - Spawn and manage multiple worker processes
+- **Health checking** - Periodic HTTP health checks via `/api/status`
+- **Crash recovery** - Automatic restart with exponential backoff
+- **Graceful shutdown** - Cross-platform via `/api/drain` endpoint
+- **Event streaming** - Pool lifecycle events for monitoring
+
+### Supervisor CLI Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-w, --workers` | Number of workers | CPU count |
+| `-p, --base-port` | Starting port | 3001 |
+| `--health-interval` | Health check interval (ms) | 5000 |
+| `--health-timeout` | Health check timeout (ms) | 5000 |
+| `--restart-delay` | Initial restart delay (ms) | 1000 |
+| `--max-restart-delay` | Max restart delay (ms) | 30000 |
+| `--max-failures` | Max consecutive failures before stopping | 5 |
+| `--shutdown-timeout` | Graceful shutdown timeout (ms) | 30000 |
+
+### Building the Supervisor
+
+```bash
+cd supervisor
+cargo build --release
+```
+
+The binary will be at `supervisor/target/release/l0-supervisor`.
+
 ## 📁 Project Structure
 
 ```
@@ -267,7 +329,8 @@ l0-worker/
 │   └── config.ts
 ├── src/
 │   ├── index.ts            # Main exports
-│   ├── worker-instance.ts  # Vercel worker class
+│   ├── server.ts           # Standalone Bun server
+│   ├── worker-instance.ts  # Worker class
 │   ├── config.ts           # Configuration defaults
 │   ├── events/             # Event schemas
 │   ├── executor/           # Task execution with L0
@@ -277,6 +340,13 @@ l0-worker/
 │   ├── replay/             # Event replay
 │   ├── auth/               # Auth validation
 │   └── utils/              # Utilities
+├── supervisor/             # Rust process supervisor
+│   ├── src/
+│   │   ├── main.rs         # CLI entry point
+│   │   ├── pool.rs         # Worker pool management
+│   │   ├── worker.rs       # Worker process handling
+│   │   └── health.rs       # Health checking
+│   └── Cargo.toml
 └── package.json
 ```
 

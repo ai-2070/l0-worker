@@ -5,7 +5,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Events emitted by a worker process
 #[derive(Debug, Clone)]
@@ -200,27 +200,60 @@ impl Worker {
         }
     }
 
-    /// Send SIGTERM to the worker for graceful shutdown
-    #[cfg(unix)]
+    /// Request graceful shutdown via HTTP endpoint.
+    ///
+    /// Calls POST /api/drain on the worker to trigger graceful shutdown.
+    /// On Unix, also sends SIGTERM as a backup signal.
+    /// This approach works cross-platform without platform-specific IPC.
     pub async fn terminate(&mut self) -> Result<(), std::io::Error> {
-        use nix::sys::signal::{kill, Signal};
-        use nix::unistd::Pid;
+        if self.child.is_none() {
+            return Ok(());
+        }
 
-        if let Some(ref child) = self.child {
-            if let Some(pid) = child.id() {
-                info!(worker_id = %self.config.worker_id, pid = pid, "Sending SIGTERM to worker");
-                kill(Pid::from_raw(pid as i32), Signal::SIGTERM).map_err(std::io::Error::other)?;
+        let port = self.config.port;
+        let worker_id = &self.config.worker_id;
+
+        info!(worker_id = %worker_id, port = port, "Requesting graceful shutdown via HTTP");
+
+        // Try HTTP drain endpoint first (works on all platforms)
+        let drain_url = format!("http://127.0.0.1:{}/api/drain", port);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .map_err(|e| std::io::Error::other(format!("Failed to create HTTP client: {}", e)))?;
+
+        match client.post(&drain_url).send().await {
+            Ok(response) if response.status().is_success() => {
+                info!(worker_id = %worker_id, "Worker acknowledged drain request");
+            }
+            Ok(response) => {
+                warn!(
+                    worker_id = %worker_id,
+                    status = %response.status(),
+                    "Worker drain request returned non-success status"
+                );
+            }
+            Err(e) => {
+                warn!(worker_id = %worker_id, error = %e, "Failed to send drain request via HTTP");
             }
         }
-        Ok(())
-    }
 
-    /// Send SIGTERM to the worker for graceful shutdown (Windows fallback)
-    #[cfg(not(unix))]
-    pub async fn terminate(&mut self) -> Result<(), std::io::Error> {
-        if let Some(ref mut child) = self.child {
-            child.kill().await?;
+        // On Unix, also send SIGTERM as backup
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+
+            if let Some(ref child) = self.child {
+                if let Some(pid) = child.id() {
+                    info!(worker_id = %worker_id, pid = pid, "Sending SIGTERM to worker");
+                    if let Err(e) = kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {
+                        warn!(worker_id = %worker_id, error = %e, "Failed to send SIGTERM");
+                    }
+                }
+            }
         }
+
         Ok(())
     }
 
