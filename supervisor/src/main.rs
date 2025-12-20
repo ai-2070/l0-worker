@@ -3,12 +3,13 @@ mod health;
 mod pool;
 mod worker;
 
+use api::AppState;
 use clap::Parser;
 use pool::{PoolConfig, PoolEvent, WorkerPool};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -126,6 +127,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create event channel for pool events
     let (pool_tx, mut pool_rx) = mpsc::channel::<PoolEvent>(32);
 
+    // Create broadcast channel for SSE clients
+    let (sse_tx, _sse_rx) = broadcast::channel::<PoolEvent>(64);
+
     // Create and start worker pool
     let pool = Arc::new(RwLock::new(WorkerPool::new(config, pool_tx)));
 
@@ -137,10 +141,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Spawn pool event handler
+    // Spawn pool event handler - logs and broadcasts to SSE clients
+    let sse_tx_clone = sse_tx.clone();
     let event_handler = tokio::spawn(async move {
         while let Some(event) = pool_rx.recv().await {
-            match event {
+            // Log the event
+            match &event {
                 PoolEvent::WorkerHealthy { worker_id, port } => {
                     info!(worker_id = %worker_id, port = port, "Worker healthy");
                 }
@@ -160,14 +166,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("Pool shutting down");
                 }
             }
+
+            // Broadcast to SSE clients (ignore if no subscribers)
+            let _ = sse_tx_clone.send(event);
         }
     });
 
     // Start API server
-    let api_pool = Arc::clone(&pool);
+    let api_state = AppState {
+        pool: Arc::clone(&pool),
+        event_tx: sse_tx,
+    };
     let api_port = args.api_port;
     let api_server = tokio::spawn(async move {
-        if let Err(e) = api::start_server(api_pool, api_port).await {
+        if let Err(e) = api::start_server(api_state, api_port).await {
             error!(error = %e, "API server error");
         }
     });
