@@ -187,15 +187,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle shutdown signals
     let shutdown_timeout = Duration::from_millis(args.shutdown_timeout);
 
-    // Health check interval for run_once
+    // Health check interval
     let health_interval = Duration::from_millis(args.health_interval);
+    let poll_interval = Duration::from_millis(50); // Short poll for events
 
     tokio::select! {
         _ = async {
+            let mut health_ticker = tokio::time::interval(health_interval);
+            health_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
             loop {
-                // Acquire lock, do one iteration, release lock
-                // This allows API to read pool state between iterations
-                pool.write().await.run_once(health_interval).await;
+                tokio::select! {
+                    // Health check timer
+                    _ = health_ticker.tick() => {
+                        pool.write().await.do_health_check().await;
+                    }
+
+                    // Poll for events frequently (short lock hold)
+                    _ = tokio::time::sleep(poll_interval) => {
+                        // Process all pending events
+                        while pool.write().await.try_recv_event().await {}
+                    }
+                }
             }
         } => {
             // Pool run exited (shouldn't happen normally)

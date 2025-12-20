@@ -199,23 +199,22 @@ impl WorkerPool {
         }
     }
 
-    /// Run a single iteration of the event loop with timeout
-    /// Returns true if work was done, false if timeout expired
-    pub async fn run_once(&mut self, timeout: Duration) -> bool {
-        tokio::select! {
-            // Handle worker events
-            Some(event) = self.event_rx.recv() => {
+    /// Try to receive and handle a single worker event
+    /// Returns true if an event was processed, false if no event available
+    pub async fn try_recv_event(&mut self) -> bool {
+        match self.event_rx.try_recv() {
+            Ok(event) => {
                 self.handle_worker_event(event).await;
                 true
             }
-
-            // Timeout - do health check
-            _ = tokio::time::sleep(timeout) => {
-                self.check_all_health().await;
-                self.process_restarts().await;
-                true
-            }
+            Err(_) => false,
         }
+    }
+
+    /// Run health checks and process restarts
+    pub async fn do_health_check(&mut self) {
+        self.check_all_health().await;
+        self.process_restarts().await;
     }
 
     /// Handle a worker event
