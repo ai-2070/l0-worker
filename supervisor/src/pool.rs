@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 /// Worker state in the pool
 #[derive(Debug, Clone, PartialEq)]
@@ -138,7 +139,7 @@ impl WorkerPool {
 
         for i in 0..self.config.worker_count {
             let port = self.config.base_port + i as u16;
-            let worker_id = format!("l0-{}", i + 1);
+            let worker_id = format!("l0-{}", Uuid::now_v7());
 
             self.spawn_worker(&worker_id, port).await?;
         }
@@ -633,6 +634,108 @@ impl WorkerPool {
                 consecutive_failures: managed.consecutive_failures,
             })
             .collect()
+    }
+
+    /// Find the next available port
+    fn next_available_port(&self) -> u16 {
+        let used_ports: std::collections::HashSet<u16> =
+            self.workers.values().map(|m| m.worker.port()).collect();
+
+        let mut port = self.config.base_port;
+        while used_ports.contains(&port) {
+            port += 1;
+        }
+        port
+    }
+
+    /// Spawn a new worker dynamically
+    pub async fn spawn_new_worker(&mut self) -> Result<(String, u16), Box<dyn std::error::Error>> {
+        let port = self.next_available_port();
+        let worker_id = format!("l0-{}", Uuid::now_v7());
+
+        info!(worker_id = %worker_id, port = port, "Spawning new worker via API");
+
+        self.spawn_worker(&worker_id, port).await?;
+
+        Ok((worker_id, port))
+    }
+
+    /// Drain a specific worker (graceful shutdown)
+    pub async fn drain_worker(
+        &mut self,
+        worker_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let managed = self
+            .workers
+            .get_mut(worker_id)
+            .ok_or_else(|| format!("Worker {} not found", worker_id))?;
+
+        if !managed.worker.is_running() {
+            return Err(format!("Worker {} is not running", worker_id).into());
+        }
+
+        info!(worker_id = %worker_id, "Draining worker via API");
+
+        managed.state = WorkerState::Draining;
+        managed.worker.terminate().await?;
+
+        Ok(())
+    }
+
+    /// Force kill a specific worker
+    pub async fn kill_worker(&mut self, worker_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let managed = self
+            .workers
+            .get_mut(worker_id)
+            .ok_or_else(|| format!("Worker {} not found", worker_id))?;
+
+        if !managed.worker.is_running() {
+            return Err(format!("Worker {} is not running", worker_id).into());
+        }
+
+        info!(worker_id = %worker_id, "Killing worker via API");
+
+        managed.worker.kill().await?;
+        managed.state = WorkerState::Stopped;
+
+        Ok(())
+    }
+
+    /// Restart a specific worker (drain + spawn new)
+    pub async fn restart_worker(
+        &mut self,
+        worker_id: &str,
+    ) -> Result<(String, u16), Box<dyn std::error::Error>> {
+        let port = {
+            let managed = self
+                .workers
+                .get_mut(worker_id)
+                .ok_or_else(|| format!("Worker {} not found", worker_id))?;
+
+            if managed.worker.is_running() {
+                info!(worker_id = %worker_id, "Terminating worker for restart");
+                managed.worker.terminate().await?;
+                // Wait briefly for termination
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if managed.worker.is_running() {
+                    managed.worker.kill().await?;
+                }
+                let _ = managed.worker.wait().await;
+            }
+
+            managed.worker.port()
+        };
+
+        // Remove old worker
+        self.workers.remove(worker_id);
+
+        // Spawn new worker on same port
+        let new_worker_id = format!("l0-{}", Uuid::now_v7());
+        info!(old_id = %worker_id, new_id = %new_worker_id, port = port, "Restarting worker via API");
+
+        self.spawn_worker(&new_worker_id, port).await?;
+
+        Ok((new_worker_id, port))
     }
 }
 

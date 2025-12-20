@@ -1,7 +1,8 @@
 use axum::{
-    extract::State,
+    extract::{Path, State},
+    http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use futures::stream::Stream;
@@ -13,12 +14,32 @@ use tokio_stream::StreamExt;
 
 use crate::pool::{PoolEvent, WorkerPool, WorkerStatus};
 
-/// Pool status response
+/// Workers list response
 #[derive(Debug, Serialize)]
-pub struct PoolStatusResponse {
+pub struct WorkersResponse {
     pub workers: Vec<WorkerStatus>,
     pub healthy_count: usize,
     pub total_count: usize,
+}
+
+/// Spawn response
+#[derive(Debug, Serialize)]
+pub struct SpawnResponse {
+    pub id: String,
+    pub port: u16,
+}
+
+/// Generic operation response
+#[derive(Debug, Serialize)]
+pub struct OperationResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// Error response
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    pub error: String,
 }
 
 /// Shared state for the API
@@ -28,18 +49,117 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<PoolEvent>,
 }
 
-/// GET /api/pool - Get status of all workers
-async fn get_pool_status(State(state): State<AppState>) -> Json<PoolStatusResponse> {
+/// GET /workers - Get status of all workers
+async fn list_workers(State(state): State<AppState>) -> Json<WorkersResponse> {
     let pool = state.pool.read().await;
     let workers = pool.get_workers_status();
     let healthy_count = pool.healthy_count();
     let total_count = workers.len();
 
-    Json(PoolStatusResponse {
+    Json(WorkersResponse {
         workers,
         healthy_count,
         total_count,
     })
+}
+
+/// GET /workers/:id - Get status of a single worker
+async fn get_worker(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<WorkerStatus>, (StatusCode, Json<ErrorResponse>)> {
+    let pool = state.pool.read().await;
+    let workers = pool.get_workers_status();
+
+    workers
+        .into_iter()
+        .find(|w| w.id == id)
+        .map(Json)
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Worker {} not found", id),
+                }),
+            )
+        })
+}
+
+/// POST /workers/spawn - Spawn a new worker
+async fn spawn_worker(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<SpawnResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let mut pool = state.pool.write().await;
+
+    match pool.spawn_new_worker().await {
+        Ok((id, port)) => Ok((StatusCode::CREATED, Json(SpawnResponse { id, port }))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )),
+    }
+}
+
+/// POST /workers/:id/drain - Gracefully drain a worker
+async fn drain_worker(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<OperationResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let mut pool = state.pool.write().await;
+
+    match pool.drain_worker(&id).await {
+        Ok(()) => Ok(Json(OperationResponse {
+            success: true,
+            message: format!("Worker {} drain initiated", id),
+        })),
+        Err(e) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )),
+    }
+}
+
+/// POST /workers/:id/kill - Force kill a worker
+async fn kill_worker(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<OperationResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let mut pool = state.pool.write().await;
+
+    match pool.kill_worker(&id).await {
+        Ok(()) => Ok(Json(OperationResponse {
+            success: true,
+            message: format!("Worker {} killed", id),
+        })),
+        Err(e) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )),
+    }
+}
+
+/// POST /workers/:id/restart - Restart a worker (drain + spawn)
+async fn restart_worker(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<SpawnResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let mut pool = state.pool.write().await;
+
+    match pool.restart_worker(&id).await {
+        Ok((new_id, port)) => Ok(Json(SpawnResponse { id: new_id, port })),
+        Err(e) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )),
+    }
 }
 
 /// SSE event data
@@ -54,49 +174,47 @@ enum EventData {
     ShuttingDown {},
 }
 
-/// GET /api/pool/events - SSE stream of pool events
-async fn get_pool_events(
+/// GET /workers/events - SSE stream of pool events
+async fn get_worker_events(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = state.event_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| {
-        match result {
-            Ok(event) => {
-                let (event_type, data) = match event {
-                    PoolEvent::WorkerHealthy { worker_id, port } => (
-                        "worker_healthy",
-                        EventData::WorkerHealthy {
-                            id: worker_id,
-                            port,
-                        },
-                    ),
-                    PoolEvent::WorkerUnhealthy { worker_id, reason } => (
-                        "worker_unhealthy",
-                        EventData::WorkerUnhealthy {
-                            id: worker_id,
-                            reason,
-                        },
-                    ),
-                    PoolEvent::WorkerRestarting { worker_id, attempt } => (
-                        "worker_restarting",
-                        EventData::WorkerRestarting {
-                            id: worker_id,
-                            attempt,
-                        },
-                    ),
-                    PoolEvent::WorkerFailed { worker_id } => {
-                        ("worker_failed", EventData::WorkerFailed { id: worker_id })
-                    }
-                    PoolEvent::AllWorkersHealthy => {
-                        ("all_workers_healthy", EventData::AllWorkersHealthy {})
-                    }
-                    PoolEvent::ShuttingDown => ("shutting_down", EventData::ShuttingDown {}),
-                };
-                let json = serde_json::to_string(&data).unwrap_or_default();
-                Some(Ok(Event::default().event(event_type).data(json)))
-            }
-            Err(_) => None, // Lagged, skip
+    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(event) => {
+            let (event_type, data) = match event {
+                PoolEvent::WorkerHealthy { worker_id, port } => (
+                    "worker_healthy",
+                    EventData::WorkerHealthy {
+                        id: worker_id,
+                        port,
+                    },
+                ),
+                PoolEvent::WorkerUnhealthy { worker_id, reason } => (
+                    "worker_unhealthy",
+                    EventData::WorkerUnhealthy {
+                        id: worker_id,
+                        reason,
+                    },
+                ),
+                PoolEvent::WorkerRestarting { worker_id, attempt } => (
+                    "worker_restarting",
+                    EventData::WorkerRestarting {
+                        id: worker_id,
+                        attempt,
+                    },
+                ),
+                PoolEvent::WorkerFailed { worker_id } => {
+                    ("worker_failed", EventData::WorkerFailed { id: worker_id })
+                }
+                PoolEvent::AllWorkersHealthy => {
+                    ("all_workers_healthy", EventData::AllWorkersHealthy {})
+                }
+                PoolEvent::ShuttingDown => ("shutting_down", EventData::ShuttingDown {}),
+            };
+            let json = serde_json::to_string(&data).unwrap_or_default();
+            Some(Ok(Event::default().event(event_type).data(json)))
         }
+        Err(_) => None, // Lagged, skip
     });
 
     Sse::new(stream).keep_alive(
@@ -109,8 +227,16 @@ async fn get_pool_events(
 /// Create the API router
 pub fn create_router(state: AppState) -> Router {
     Router::new()
-        .route("/api/pool", get(get_pool_status))
-        .route("/api/pool/events", get(get_pool_events))
+        // List and events
+        .route("/workers", get(list_workers))
+        .route("/workers/events", get(get_worker_events))
+        // Spawn new worker
+        .route("/workers/spawn", post(spawn_worker))
+        // Single worker operations
+        .route("/workers/{id}", get(get_worker))
+        .route("/workers/{id}/drain", post(drain_worker))
+        .route("/workers/{id}/kill", post(kill_worker))
+        .route("/workers/{id}/restart", post(restart_worker))
         .with_state(state)
 }
 

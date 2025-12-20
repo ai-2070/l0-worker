@@ -316,58 +316,107 @@ cargo build --release
 
 ### Supervisor API
 
-The supervisor exposes a REST API for querying pool state:
+The supervisor exposes a REST API for querying and controlling the worker pool.
 
-#### GET /api/pool
+#### GET /workers
 
-Returns status of all workers in the pool.
+List all workers.
 
 ```bash
-curl http://localhost:9000/api/pool
+curl http://localhost:9000/workers
 ```
 
 Response:
 ```json
 {
   "workers": [
-    { "id": "l0-1", "port": 3001, "state": "healthy", "consecutive_failures": 0 },
-    { "id": "l0-2", "port": 3002, "state": "healthy", "consecutive_failures": 0 },
-    { "id": "l0-3", "port": 3003, "state": "starting", "consecutive_failures": 0 }
+    { "id": "l0-019400a1-2b3c-7def-8901-234567890abc", "port": 3001, "state": "healthy", "consecutive_failures": 0 },
+    { "id": "l0-019400a1-2b3c-7def-8901-234567890abd", "port": 3002, "state": "healthy", "consecutive_failures": 0 }
   ],
   "healthy_count": 2,
-  "total_count": 3
+  "total_count": 2
 }
 ```
 
 Worker states: `starting`, `healthy`, `draining`, `failed`, `stopped`
 
-#### GET /api/pool/events (SSE)
+#### GET /workers/:id
 
-Real-time event stream for worker lifecycle changes. L1 can subscribe once and receive instant notifications.
+Get a single worker's status.
 
 ```bash
-curl -N http://localhost:9000/api/pool/events
+curl http://localhost:9000/workers/l0-019400a1-2b3c-7def-8901-234567890abc
+```
+
+#### GET /workers/events (SSE)
+
+Real-time event stream for worker lifecycle changes.
+
+```bash
+curl -N http://localhost:9000/workers/events
 ```
 
 Events:
 ```
 event: worker_healthy
-data: {"id":"l0-1","port":3001}
+data: {"id":"l0-...","port":3001}
 
 event: worker_unhealthy
-data: {"id":"l0-2","reason":"health check failed"}
+data: {"id":"l0-...","reason":"health check failed"}
 
 event: worker_restarting
-data: {"id":"l0-2","attempt":1}
+data: {"id":"l0-...","attempt":1}
 
 event: worker_failed
-data: {"id":"l0-2"}
+data: {"id":"l0-..."}
 
 event: all_workers_healthy
 data: {}
 
 event: shutting_down
 data: {}
+```
+
+#### POST /workers/spawn
+
+Spawn a new worker on the next available port.
+
+```bash
+curl -X POST http://localhost:9000/workers/spawn
+```
+
+Response:
+```json
+{ "id": "l0-019400a1-2b3c-7def-8901-234567890abe", "port": 3003 }
+```
+
+#### POST /workers/:id/drain
+
+Gracefully drain a worker (sends shutdown signal, waits for in-flight requests).
+
+```bash
+curl -X POST http://localhost:9000/workers/l0-019400a1-2b3c-7def-8901-234567890abc/drain
+```
+
+#### POST /workers/:id/kill
+
+Force kill a worker immediately.
+
+```bash
+curl -X POST http://localhost:9000/workers/l0-019400a1-2b3c-7def-8901-234567890abc/kill
+```
+
+#### POST /workers/:id/restart
+
+Restart a worker (drain + spawn new on same port).
+
+```bash
+curl -X POST http://localhost:9000/workers/l0-019400a1-2b3c-7def-8901-234567890abc/restart
+```
+
+Response:
+```json
+{ "id": "l0-019400a1-2b3c-7def-8901-234567890abf", "port": 3001 }
 ```
 
 ### Supervisor CLI Options
