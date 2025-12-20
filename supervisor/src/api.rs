@@ -12,7 +12,16 @@ use tokio::sync::{broadcast, RwLock};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-use crate::pool::{PoolEvent, WorkerPool, WorkerStatus};
+use crate::pool::{PoolError, PoolEvent, WorkerPool, WorkerStatus};
+
+/// Convert PoolError to HTTP status code
+fn pool_error_to_status(err: &PoolError) -> StatusCode {
+    match err {
+        PoolError::NotFound(_) => StatusCode::NOT_FOUND,
+        PoolError::NotRunning(_) => StatusCode::CONFLICT,
+        PoolError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
 
 /// Workers list response
 #[derive(Debug, Serialize)]
@@ -115,7 +124,7 @@ async fn drain_worker(
             message: format!("Worker {} drain initiated", id),
         })),
         Err(e) => Err((
-            StatusCode::NOT_FOUND,
+            pool_error_to_status(&e),
             Json(ErrorResponse {
                 error: e.to_string(),
             }),
@@ -136,7 +145,7 @@ async fn kill_worker(
             message: format!("Worker {} killed", id),
         })),
         Err(e) => Err((
-            StatusCode::NOT_FOUND,
+            pool_error_to_status(&e),
             Json(ErrorResponse {
                 error: e.to_string(),
             }),
@@ -154,7 +163,7 @@ async fn restart_worker(
     match pool.restart_worker(&id).await {
         Ok((new_id, port)) => Ok(Json(SpawnResponse { id: new_id, port })),
         Err(e) => Err((
-            StatusCode::NOT_FOUND,
+            pool_error_to_status(&e),
             Json(ErrorResponse {
                 error: e.to_string(),
             }),

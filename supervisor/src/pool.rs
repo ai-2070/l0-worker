@@ -74,6 +74,29 @@ impl Default for PoolConfig {
     }
 }
 
+/// Pool operation errors
+#[derive(Debug)]
+pub enum PoolError {
+    /// Worker not found
+    NotFound(String),
+    /// Worker is not running
+    NotRunning(String),
+    /// Internal error
+    Internal(String),
+}
+
+impl std::fmt::Display for PoolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PoolError::NotFound(msg) => write!(f, "{}", msg),
+            PoolError::NotRunning(msg) => write!(f, "{}", msg),
+            PoolError::Internal(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for PoolError {}
+
 /// Events emitted by the worker pool
 #[derive(Debug, Clone)]
 pub enum PoolEvent {
@@ -637,20 +660,28 @@ impl WorkerPool {
     }
 
     /// Find the next available port
-    fn next_available_port(&self) -> u16 {
+    /// Maximum port number to use (stay within ephemeral port range)
+    const MAX_PORT: u16 = 49151;
+
+    fn next_available_port(&self) -> Result<u16, PoolError> {
         let used_ports: std::collections::HashSet<u16> =
             self.workers.values().map(|m| m.worker.port()).collect();
 
         let mut port = self.config.base_port;
         while used_ports.contains(&port) {
+            if port >= Self::MAX_PORT {
+                return Err(PoolError::Internal(
+                    "No available ports in allowed range".to_string(),
+                ));
+            }
             port += 1;
         }
-        port
+        Ok(port)
     }
 
     /// Spawn a new worker dynamically
     pub async fn spawn_new_worker(&mut self) -> Result<(String, u16), Box<dyn std::error::Error>> {
-        let port = self.next_available_port();
+        let port = self.next_available_port()?;
         let worker_id = format!("l0-{}", Uuid::now_v7());
 
         info!(worker_id = %worker_id, port = port, "Spawning new worker via API");
@@ -661,64 +692,72 @@ impl WorkerPool {
     }
 
     /// Drain a specific worker (graceful shutdown)
-    pub async fn drain_worker(
-        &mut self,
-        worker_id: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn drain_worker(&mut self, worker_id: &str) -> Result<(), PoolError> {
         let managed = self
             .workers
             .get_mut(worker_id)
-            .ok_or_else(|| format!("Worker {} not found", worker_id))?;
+            .ok_or_else(|| PoolError::NotFound(format!("Worker {} not found", worker_id)))?;
 
         if !managed.worker.is_running() {
-            return Err(format!("Worker {} is not running", worker_id).into());
+            return Err(PoolError::NotRunning(format!(
+                "Worker {} is not running",
+                worker_id
+            )));
         }
 
         info!(worker_id = %worker_id, "Draining worker via API");
 
         managed.state = WorkerState::Draining;
-        managed.worker.terminate().await?;
+        managed
+            .worker
+            .terminate()
+            .await
+            .map_err(|e| PoolError::Internal(format!("Failed to terminate worker: {}", e)))?;
 
         Ok(())
     }
 
     /// Force kill a specific worker
-    pub async fn kill_worker(&mut self, worker_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn kill_worker(&mut self, worker_id: &str) -> Result<(), PoolError> {
         let managed = self
             .workers
             .get_mut(worker_id)
-            .ok_or_else(|| format!("Worker {} not found", worker_id))?;
+            .ok_or_else(|| PoolError::NotFound(format!("Worker {} not found", worker_id)))?;
 
         if !managed.worker.is_running() {
-            return Err(format!("Worker {} is not running", worker_id).into());
+            return Err(PoolError::NotRunning(format!(
+                "Worker {} is not running",
+                worker_id
+            )));
         }
 
         info!(worker_id = %worker_id, "Killing worker via API");
 
-        managed.worker.kill().await?;
+        managed
+            .worker
+            .kill()
+            .await
+            .map_err(|e| PoolError::Internal(format!("Failed to kill worker: {}", e)))?;
         managed.state = WorkerState::Stopped;
 
         Ok(())
     }
 
     /// Restart a specific worker (drain + spawn new)
-    pub async fn restart_worker(
-        &mut self,
-        worker_id: &str,
-    ) -> Result<(String, u16), Box<dyn std::error::Error>> {
+    pub async fn restart_worker(&mut self, worker_id: &str) -> Result<(String, u16), PoolError> {
         let port = {
             let managed = self
                 .workers
                 .get_mut(worker_id)
-                .ok_or_else(|| format!("Worker {} not found", worker_id))?;
+                .ok_or_else(|| PoolError::NotFound(format!("Worker {} not found", worker_id)))?;
 
             if managed.worker.is_running() {
                 info!(worker_id = %worker_id, "Terminating worker for restart");
-                managed.worker.terminate().await?;
+                let _ = managed.worker.terminate().await;
                 // Wait briefly for termination
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 if managed.worker.is_running() {
-                    managed.worker.kill().await?;
+                    let _ = managed.worker.kill().await;
                 }
                 let _ = managed.worker.wait().await;
             }
@@ -733,7 +772,9 @@ impl WorkerPool {
         let new_worker_id = format!("l0-{}", Uuid::now_v7());
         info!(old_id = %worker_id, new_id = %new_worker_id, port = port, "Restarting worker via API");
 
-        self.spawn_worker(&new_worker_id, port).await?;
+        self.spawn_worker(&new_worker_id, port).await.map_err(|e| {
+            PoolError::Internal(format!("Failed to spawn replacement worker: {}", e))
+        })?;
 
         Ok((new_worker_id, port))
     }
