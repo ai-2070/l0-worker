@@ -1,68 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { FailureClass } from "./events/index.js";
-
-/**
- * Extract the error classification logic for testability.
- * This mirrors the classifyError and isRetryable functions from worker-instance.ts
- */
-
-class OutputValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "OutputValidationError";
-  }
-}
-
-function classifyError(error: unknown): FailureClass {
-  if (!(error instanceof Error)) {
-    return FailureClass.UNKNOWN;
-  }
-
-  if (error instanceof OutputValidationError) {
-    return FailureClass.INVALID_INPUT;
-  }
-
-  const message = error.message.toLowerCase();
-  const name = error.name.toLowerCase();
-  if (message.includes("abort") || name.includes("abort")) {
-    return FailureClass.ABORTED;
-  }
-  if (message.includes("timeout") || name.includes("timeout")) {
-    return FailureClass.TIMEOUT;
-  }
-  if (message.includes("rate limit") || message.includes("429")) {
-    return FailureClass.RATE_LIMITED;
-  }
-  if (message.includes("context length") || message.includes("too long")) {
-    return FailureClass.CONTEXT_LENGTH_EXCEEDED;
-  }
-  if (
-    message.includes("network") ||
-    message.includes("econnreset") ||
-    message.includes("econnrefused")
-  ) {
-    return FailureClass.NETWORK_ERROR;
-  }
-  if (message.includes("model") || message.includes("invalid model")) {
-    return FailureClass.MODEL_ERROR;
-  }
-  if (message.includes("invalid") || message.includes("validation")) {
-    return FailureClass.INVALID_INPUT;
-  }
-
-  return FailureClass.UNKNOWN;
-}
-
-function isRetryable(failureClass: FailureClass): boolean {
-  switch (failureClass) {
-    case FailureClass.TIMEOUT:
-    case FailureClass.RATE_LIMITED:
-    case FailureClass.NETWORK_ERROR:
-      return true;
-    default:
-      return false;
-  }
-}
+import { classifyError, isRetryable } from "./worker-instance.js";
+import { OutputValidationError } from "./executor/index.js";
 
 describe("error classification", () => {
   describe("classifyError", () => {

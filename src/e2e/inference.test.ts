@@ -6,7 +6,7 @@
  *
  * Run with: npm run test:e2e
  */
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { VercelWorker } from "../worker-instance.js";
 import { generateAuthToken } from "../auth/validate.js";
 import type { TaskSubmit, OutboundEvent } from "../events/index.js";
@@ -46,10 +46,21 @@ function getCompleted(
 
 describe.skipIf(!hasApiKey)("E2E: Real Inference", () => {
   let worker: VercelWorker;
+  let originalAuthSecret: string | undefined;
 
   beforeAll(() => {
-    // Set auth secret for tests
+    // Save original value and set auth secret for tests
+    originalAuthSecret = process.env.L0_AUTH_SECRET;
     process.env.L0_AUTH_SECRET = TEST_SECRET;
+  });
+
+  afterAll(() => {
+    // Restore original value to prevent test pollution
+    if (originalAuthSecret === undefined) {
+      delete process.env.L0_AUTH_SECRET;
+    } else {
+      process.env.L0_AUTH_SECRET = originalAuthSecret;
+    }
   });
 
   beforeEach(() => {
@@ -379,14 +390,24 @@ describe.skipIf(!hasApiKey)("E2E: Real Inference", () => {
         prompt: "Say hello.",
       });
 
+      // Use a promise that resolves when task1 is accepted (slot acquired)
+      let task1Accepted: () => void;
+      const task1AcceptedPromise = new Promise<void>(
+        (resolve) => (task1Accepted = resolve),
+      );
+
       // Start first task (don't await)
       const task1Promise = singleSlotWorker.executeTaskWithEvents(
         task1,
-        () => {},
+        (event) => {
+          if (event.type === "TASK_ACCEPTED") {
+            task1Accepted();
+          }
+        },
       );
 
-      // Small delay to ensure task1 has acquired the slot
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Wait for task1 to be accepted (slot is now occupied)
+      await task1AcceptedPromise;
 
       // Second task should fail due to no slots
       await expect(

@@ -6,7 +6,15 @@
  *
  * Run with: npm run test:e2e
  */
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  vi,
+} from "vitest";
 import { generateAuthToken } from "../auth/validate.js";
 import { sha256 } from "../utils/index.js";
 import type { InferenceOrder } from "../inference/index.js";
@@ -118,8 +126,21 @@ function createTaskPayload(
 }
 
 describe.skipIf(!hasApiKey)("E2E: API Endpoints", () => {
+  let originalAuthSecret: string | undefined;
+
   beforeAll(() => {
+    // Save original value and set auth secret for tests
+    originalAuthSecret = process.env.L0_AUTH_SECRET;
     process.env.L0_AUTH_SECRET = TEST_SECRET;
+  });
+
+  afterAll(() => {
+    // Restore original value to prevent test pollution
+    if (originalAuthSecret === undefined) {
+      delete process.env.L0_AUTH_SECRET;
+    } else {
+      process.env.L0_AUTH_SECRET = originalAuthSecret;
+    }
   });
 
   // Reset worker instance between tests
@@ -333,17 +354,28 @@ describe.skipIf(!hasApiKey)("E2E: API Endpoints", () => {
       await submitHandler(submitReq, submitRes);
 
       const submitEvents = submitRes._sseEvents;
+      const failed = submitEvents.find(
+        (e: any) => e.type === "TASK_FAILED",
+      ) as any;
       const completed = submitEvents.find(
         (e: any) => e.type === "TASK_COMPLETED",
       ) as any;
 
-      // Skip if task failed (L0 issues)
-      if (!completed) {
-        console.log(
-          "Skipping replay test - task did not complete successfully",
-        );
-        return;
+      // If task failed due to known L0 bugs, skip with explicit message
+      if (failed) {
+        const isKnownL0Bug =
+          failed.message?.includes("ReadableStream is locked") ||
+          failed.message?.includes("Zero output detected");
+        if (isKnownL0Bug) {
+          console.log(`Skipping replay test - known L0 bug: ${failed.message}`);
+          return;
+        }
+        // Unknown failure - fail the test
+        throw new Error(`Task failed unexpectedly: ${failed.message}`);
       }
+
+      // Task should have completed
+      expect(completed).toBeDefined();
 
       // Now replay using the replay handler
       const replayHandler = (await import("../../api/replay.js")).default;
