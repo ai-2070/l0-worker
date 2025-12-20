@@ -448,4 +448,189 @@ describe.skipIf(!hasApiKey)("E2E: API Endpoints", () => {
       expect(lastDataChunk).toBe("data: [DONE]\n\n");
     });
   });
+
+});
+
+/**
+ * Tests for /api/config endpoint (Vercel).
+ * These tests do NOT require OPENAI_API_KEY since they only test config updates.
+ */
+describe("E2E: /api/config endpoint", () => {
+  let originalAuthSecret: string | undefined;
+  let originalSkipAuth: string | undefined;
+
+  beforeAll(() => {
+    originalAuthSecret = process.env.L0_AUTH_SECRET;
+    originalSkipAuth = process.env.SKIP_AUTH_VALIDATION;
+    process.env.L0_AUTH_SECRET = TEST_SECRET;
+    // Force auth validation (simulates Vercel environment)
+    process.env.SKIP_AUTH_VALIDATION = "false";
+  });
+
+  afterAll(() => {
+    if (originalAuthSecret === undefined) {
+      delete process.env.L0_AUTH_SECRET;
+    } else {
+      process.env.L0_AUTH_SECRET = originalAuthSecret;
+    }
+    if (originalSkipAuth === undefined) {
+      delete process.env.SKIP_AUTH_VALIDATION;
+    } else {
+      process.env.SKIP_AUTH_VALIDATION = originalSkipAuth;
+    }
+  });
+
+  beforeEach(async () => {
+    vi.resetModules();
+  });
+
+  it("returns 401 when auth is missing", async () => {
+    // Initialize worker first
+    const statusHandler = (await import("../../api/status.js")).default;
+    const statusReq = createMockRequest({ method: "GET" });
+    const statusRes = createMockResponse();
+    statusHandler(statusReq, statusRes);
+
+    const workerId = statusRes._jsonBody.workerId;
+
+    const handler = (await import("../../api/config.js")).default;
+    const configPayload = {
+      type: "WORKER_CONFIG_UPDATE",
+      worker_id: workerId,
+      max_concurrency: 32,
+      effective_ts: Date.now(),
+      // No auth provided
+    };
+
+    const req = createMockRequest({ method: "POST", body: configPayload });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(401);
+    expect(res._jsonBody.error).toBe("Auth required");
+  });
+
+  it("returns 401 for invalid auth token", async () => {
+    // Initialize worker first
+    const statusHandler = (await import("../../api/status.js")).default;
+    const statusReq = createMockRequest({ method: "GET" });
+    const statusRes = createMockResponse();
+    statusHandler(statusReq, statusRes);
+
+    const workerId = statusRes._jsonBody.workerId;
+
+    const handler = (await import("../../api/config.js")).default;
+    const configPayload = {
+      type: "WORKER_CONFIG_UPDATE",
+      worker_id: workerId,
+      max_concurrency: 32,
+      effective_ts: Date.now(),
+      auth: {
+        token: "invalid-token-that-is-long-enough-to-pass-format-check!!",
+        issued_at: Date.now(),
+        ttl: 60000,
+      },
+    };
+
+    const req = createMockRequest({ method: "POST", body: configPayload });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(401);
+    expect(res._jsonBody.error).toBe("Auth validation failed");
+  });
+
+  it("succeeds with valid auth token", async () => {
+    // Initialize worker first
+    const statusHandler = (await import("../../api/status.js")).default;
+    const statusReq = createMockRequest({ method: "GET" });
+    const statusRes = createMockResponse();
+    statusHandler(statusReq, statusRes);
+
+    const workerId = statusRes._jsonBody.workerId;
+
+    const handler = (await import("../../api/config.js")).default;
+    const issuedAt = Date.now();
+    const ttl = 60000;
+
+    const configPayload = {
+      type: "WORKER_CONFIG_UPDATE",
+      worker_id: workerId,
+      max_concurrency: 32,
+      effective_ts: Date.now(),
+      auth: {
+        token: generateAuthToken(TEST_SECRET, workerId, issuedAt, ttl),
+        issued_at: issuedAt,
+        ttl,
+      },
+    };
+
+    const req = createMockRequest({ method: "POST", body: configPayload });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._jsonBody.success).toBe(true);
+    expect(res._jsonBody.maxConcurrency).toBe(32);
+  });
+
+  it("returns 405 for non-POST methods", async () => {
+    const handler = (await import("../../api/config.js")).default;
+    const req = createMockRequest({ method: "GET" });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(405);
+  });
+
+  it("returns 400 for invalid request schema", async () => {
+    const handler = (await import("../../api/config.js")).default;
+    const req = createMockRequest({
+      method: "POST",
+      body: { invalid: "payload" },
+    });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(400);
+    expect(res._jsonBody.error).toBe("Invalid request");
+  });
+
+  it("returns 400 for worker ID mismatch", async () => {
+    // Initialize worker first
+    const statusHandler = (await import("../../api/status.js")).default;
+    const statusReq = createMockRequest({ method: "GET" });
+    const statusRes = createMockResponse();
+    statusHandler(statusReq, statusRes);
+
+    const handler = (await import("../../api/config.js")).default;
+    const issuedAt = Date.now();
+    const ttl = 60000;
+    const wrongWorkerId = "wrong-worker-id";
+
+    const configPayload = {
+      type: "WORKER_CONFIG_UPDATE",
+      worker_id: wrongWorkerId,
+      max_concurrency: 32,
+      effective_ts: Date.now(),
+      auth: {
+        token: generateAuthToken(TEST_SECRET, wrongWorkerId, issuedAt, ttl),
+        issued_at: issuedAt,
+        ttl,
+      },
+    };
+
+    const req = createMockRequest({ method: "POST", body: configPayload });
+    const res = createMockResponse();
+
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(400);
+    expect(res._jsonBody.error).toBe("Worker ID mismatch");
+  });
 });

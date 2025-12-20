@@ -1,11 +1,13 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { WorkerConfigUpdateSchema } from "../src/events/inbound.js";
+import { validateAuth } from "../src/auth/index.js";
 import { getWorkerInstance } from "../src/worker-instance.js";
 
 /**
  * POST /api/config
  *
  * Hot-update worker configuration.
+ * Requires authentication (unlike standalone server which allows localhost without auth).
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
@@ -22,6 +24,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const configUpdate = parseResult.data;
+
+  // Validate auth - required for Vercel endpoint (no localhost exception)
+  if (!configUpdate.auth) {
+    return res.status(401).json({ error: "Auth required" });
+  }
+  const authResult = validateAuth(configUpdate.auth, configUpdate.worker_id);
+  if (!authResult.valid) {
+    return res.status(401).json({
+      error: "Auth validation failed",
+      reason: authResult.reason,
+    });
+  }
 
   // Get worker instance
   const worker = getWorkerInstance();
