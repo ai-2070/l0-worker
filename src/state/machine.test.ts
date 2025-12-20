@@ -36,7 +36,7 @@ describe("WorkerStateMachine", () => {
     it("cannot transition to ACCEPTING directly", () => {
       expect(machine.canTransition(WorkerState.ACCEPTING)).toBe(false);
       expect(() => machine.transition(WorkerState.ACCEPTING)).toThrow(
-        "Invalid state transition: BOOT -> ACCEPTING"
+        "Invalid state transition: BOOT -> ACCEPTING",
       );
     });
 
@@ -150,7 +150,7 @@ describe("WorkerStateMachine", () => {
 
     it("throws on any transition attempt", () => {
       expect(() => machine.transition(WorkerState.READY)).toThrow(
-        "Invalid state transition: OFFLINE -> READY"
+        "Invalid state transition: OFFLINE -> READY",
       );
     });
 
@@ -175,7 +175,10 @@ describe("WorkerStateMachine", () => {
       machine.transition(WorkerState.READY);
 
       expect(listener).toHaveBeenCalledOnce();
-      expect(listener).toHaveBeenCalledWith(WorkerState.BOOT, WorkerState.READY);
+      expect(listener).toHaveBeenCalledWith(
+        WorkerState.BOOT,
+        WorkerState.READY,
+      );
     });
 
     it("calls multiple listeners", () => {
@@ -203,7 +206,6 @@ describe("WorkerStateMachine", () => {
     });
 
     it("handles listener removal during iteration", () => {
-      const listener1 = vi.fn();
       const listener2 = vi.fn();
 
       // First listener removes itself when called

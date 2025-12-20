@@ -280,9 +280,9 @@ describe.skipIf(!hasApiKey)("E2E: Real Inference", () => {
 
       const originalCompleted = getCompleted(originalEvents);
 
-      // Replay the task
-      const replayEvents: OutboundEvent[] = [];
-      const replayResult = await worker.replay(
+      // Replay the task and collect emitted events
+      const replayedEvents: OutboundEvent[] = [];
+      const validation = await worker.replay(
         {
           type: "TASK_REPLAY_REQUEST",
           auth: taskSubmit.auth,
@@ -292,12 +292,12 @@ describe.skipIf(!hasApiKey)("E2E: Real Inference", () => {
           reason: "test",
           replay_ts: Date.now(),
         },
-        (event) => replayEvents.push(event),
+        (event) => replayedEvents.push(event),
       );
 
-      expect(replayResult.success).toBe(true);
-      expect(replayResult.outputHashMatch).toBe(true);
-      expect(replayResult.eventsReplayed).toBeGreaterThan(0);
+      expect(validation.success).toBe(true);
+      expect(validation.outputHashMatch).toBe(true);
+      expect(validation.eventsReplayed).toBeGreaterThan(0);
 
       // Verify replayed events match original (only OutboundEvents, not L0Events)
       const originalOutbound = originalEvents.filter((e) =>
@@ -308,7 +308,7 @@ describe.skipIf(!hasApiKey)("E2E: Real Inference", () => {
           "TASK_FAILED",
         ].includes(e.type),
       );
-      expect(replayEvents).toEqual(originalOutbound);
+      expect(replayedEvents).toEqual(originalOutbound);
     });
   });
 

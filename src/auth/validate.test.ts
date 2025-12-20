@@ -173,9 +173,10 @@ describe("auth validation", () => {
       expect(result.valid).toBe(true);
     });
 
-    it("accepts tokens issued exactly at tolerance boundary", async () => {
+    it("accepts tokens issued exactly at 5s clock skew tolerance (<=5000ms)", async () => {
       const { validateAuth, generateAuthToken } = await import("./validate.js");
-      const issuedAt = Date.now() + 5000; // Exactly 5 seconds in the future
+      // CLOCK_SKEW_MS = 5000, check is: issued_at > now + 5000 (rejects if greater than)
+      const issuedAt = Date.now() + 5000;
       const ttl = 60000;
       const token = generateAuthToken(TEST_SECRET, TEST_TASK_ID, issuedAt, ttl);
       const result = validateAuth(

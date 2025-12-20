@@ -32,22 +32,31 @@ describe("WorkerConfigSchema", () => {
 
   it("rejects maxConcurrency less than 1", () => {
     expect(() =>
-      WorkerConfigSchema.parse({ workerId: "worker-1", maxConcurrency: 0 })
+      WorkerConfigSchema.parse({ workerId: "worker-1", maxConcurrency: 0 }),
     ).toThrow();
   });
 
   it("rejects loadReportIntervalMs less than 1000", () => {
     expect(() =>
-      WorkerConfigSchema.parse({ workerId: "worker-1", loadReportIntervalMs: 500 })
+      WorkerConfigSchema.parse({
+        workerId: "worker-1",
+        loadReportIntervalMs: 500,
+      }),
     ).toThrow();
   });
 
   it("rejects loadReportThreshold outside 0-1 range", () => {
     expect(() =>
-      WorkerConfigSchema.parse({ workerId: "worker-1", loadReportThreshold: -0.1 })
+      WorkerConfigSchema.parse({
+        workerId: "worker-1",
+        loadReportThreshold: -0.1,
+      }),
     ).toThrow();
     expect(() =>
-      WorkerConfigSchema.parse({ workerId: "worker-1", loadReportThreshold: 1.1 })
+      WorkerConfigSchema.parse({
+        workerId: "worker-1",
+        loadReportThreshold: 1.1,
+      }),
     ).toThrow();
   });
 });
@@ -86,8 +95,12 @@ describe("ConfigManager", () => {
       expect(manager.featureFlags).toEqual({});
     });
 
-    it("throws on invalid config", () => {
-      expect(() => new ConfigManager({ workerId: "" } as any)).not.toThrow(); // empty string is valid
+    it("accepts empty string as workerId", () => {
+      // Zod schema allows any string, including empty
+      expect(() => new ConfigManager({ workerId: "" })).not.toThrow();
+    });
+
+    it("throws when workerId is missing", () => {
       expect(() => new ConfigManager({} as any)).toThrow();
     });
   });
@@ -127,7 +140,10 @@ describe("ConfigManager", () => {
 
   describe("update", () => {
     it("updates maxConcurrency", () => {
-      const manager = new ConfigManager({ workerId: "worker-1", maxConcurrency: 4 });
+      const manager = new ConfigManager({
+        workerId: "worker-1",
+        maxConcurrency: 4,
+      });
       manager.update({ maxConcurrency: 16 });
       expect(manager.maxConcurrency).toBe(16);
     });
@@ -135,10 +151,10 @@ describe("ConfigManager", () => {
     it("throws if maxConcurrency is less than 1", () => {
       const manager = new ConfigManager({ workerId: "worker-1" });
       expect(() => manager.update({ maxConcurrency: 0 })).toThrow(
-        "maxConcurrency must be at least 1"
+        "maxConcurrency must be at least 1",
       );
       expect(() => manager.update({ maxConcurrency: -1 })).toThrow(
-        "maxConcurrency must be at least 1"
+        "maxConcurrency must be at least 1",
       );
     });
 
@@ -165,11 +181,17 @@ describe("ConfigManager", () => {
       expect(manager.featureFlags).toEqual({ featureA: true, featureB: false });
 
       manager.update({ featureFlags: { featureA: false } });
-      expect(manager.featureFlags).toEqual({ featureA: false, featureB: false });
+      expect(manager.featureFlags).toEqual({
+        featureA: false,
+        featureB: false,
+      });
     });
 
     it("handles partial updates", () => {
-      const manager = new ConfigManager({ workerId: "worker-1", maxConcurrency: 4 });
+      const manager = new ConfigManager({
+        workerId: "worker-1",
+        maxConcurrency: 4,
+      });
 
       manager.update({ maxConcurrency: 8 });
       expect(manager.maxConcurrency).toBe(8);
@@ -181,7 +203,10 @@ describe("ConfigManager", () => {
     });
 
     it("handles empty update", () => {
-      const manager = new ConfigManager({ workerId: "worker-1", maxConcurrency: 4 });
+      const manager = new ConfigManager({
+        workerId: "worker-1",
+        maxConcurrency: 4,
+      });
       manager.update({});
       expect(manager.maxConcurrency).toBe(4);
     });
