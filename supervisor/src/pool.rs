@@ -692,52 +692,48 @@ impl WorkerPool {
     }
 
     /// Drain a specific worker (graceful shutdown)
+    ///
+    /// This operation is idempotent - draining an already stopped worker succeeds.
     pub async fn drain_worker(&mut self, worker_id: &str) -> Result<(), PoolError> {
         let managed = self
             .workers
             .get_mut(worker_id)
             .ok_or_else(|| PoolError::NotFound(format!("Worker {} not found", worker_id)))?;
 
+        // Idempotent: if already stopped/draining, just update state and succeed
         if !managed.worker.is_running() {
-            return Err(PoolError::NotRunning(format!(
-                "Worker {} is not running",
-                worker_id
-            )));
+            managed.state = WorkerState::Stopped;
+            return Ok(());
         }
 
         info!(worker_id = %worker_id, "Draining worker via API");
 
         managed.state = WorkerState::Draining;
-        managed
-            .worker
-            .terminate()
-            .await
-            .map_err(|e| PoolError::Internal(format!("Failed to terminate worker: {}", e)))?;
+        // Best-effort terminate - ignore errors if process already exited
+        let _ = managed.worker.terminate().await;
 
         Ok(())
     }
 
     /// Force kill a specific worker
+    ///
+    /// This operation is idempotent - killing an already stopped worker succeeds.
     pub async fn kill_worker(&mut self, worker_id: &str) -> Result<(), PoolError> {
         let managed = self
             .workers
             .get_mut(worker_id)
             .ok_or_else(|| PoolError::NotFound(format!("Worker {} not found", worker_id)))?;
 
+        // Idempotent: if already stopped, just ensure state is correct and succeed
         if !managed.worker.is_running() {
-            return Err(PoolError::NotRunning(format!(
-                "Worker {} is not running",
-                worker_id
-            )));
+            managed.state = WorkerState::Stopped;
+            return Ok(());
         }
 
         info!(worker_id = %worker_id, "Killing worker via API");
 
-        managed
-            .worker
-            .kill()
-            .await
-            .map_err(|e| PoolError::Internal(format!("Failed to kill worker: {}", e)))?;
+        // Best-effort kill - ignore errors if process already exited
+        let _ = managed.worker.kill().await;
         managed.state = WorkerState::Stopped;
 
         Ok(())
@@ -754,12 +750,13 @@ impl WorkerPool {
             if managed.worker.is_running() {
                 info!(worker_id = %worker_id, "Terminating worker for restart");
                 let _ = managed.worker.terminate().await;
-                // Wait briefly for termination
+                // Wait briefly for graceful termination
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 if managed.worker.is_running() {
                     let _ = managed.worker.kill().await;
                 }
-                let _ = managed.worker.wait().await;
+                // Wait for process exit with timeout to prevent hanging
+                let _ = tokio::time::timeout(Duration::from_secs(5), managed.worker.wait()).await;
             }
 
             managed.worker.port()

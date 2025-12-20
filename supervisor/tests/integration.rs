@@ -230,6 +230,288 @@ fn test_worker_crash_recovery() {
     );
 }
 
+/// Get workers list from supervisor API
+fn get_workers_list(api_port: u16) -> Option<serde_json::Value> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+
+    client
+        .get(format!("http://127.0.0.1:{}/workers", api_port))
+        .send()
+        .ok()?
+        .json()
+        .ok()
+}
+
+/// Spawn a new worker via supervisor API
+fn spawn_worker_api(api_port: u16) -> Option<serde_json::Value> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    client
+        .post(format!("http://127.0.0.1:{}/workers/spawn", api_port))
+        .send()
+        .ok()?
+        .json()
+        .ok()
+}
+
+/// Kill a worker via supervisor API
+fn kill_worker_api(api_port: u16, worker_id: &str) -> Option<serde_json::Value> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+
+    client
+        .post(format!(
+            "http://127.0.0.1:{}/workers/{}/kill",
+            api_port, worker_id
+        ))
+        .send()
+        .ok()?
+        .json()
+        .ok()
+}
+
+/// Restart a worker via supervisor API
+fn restart_worker_api(api_port: u16, worker_id: &str) -> Option<serde_json::Value> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    client
+        .post(format!(
+            "http://127.0.0.1:{}/workers/{}/restart",
+            api_port, worker_id
+        ))
+        .send()
+        .ok()?
+        .json()
+        .ok()
+}
+
+/// Wait for supervisor API to be ready
+fn wait_for_supervisor_api(api_port: u16, timeout: Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if get_workers_list(api_port).is_some() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+/// Start supervisor with custom API port
+fn start_supervisor_with_api(workers: u32, base_port: u16, api_port: u16) -> Child {
+    Command::new(supervisor_binary())
+        .arg("--workers")
+        .arg(workers.to_string())
+        .arg("--base-port")
+        .arg(base_port.to_string())
+        .arg("--api-port")
+        .arg(api_port.to_string())
+        .arg("--worker-binary")
+        .arg(worker_binary())
+        .arg("--health-interval")
+        .arg("500")
+        .arg("--restart-delay")
+        .arg("500")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to start supervisor")
+}
+
+#[test]
+fn test_supervisor_api_workers_list() {
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4040;
+    let api_port = 9040;
+    cleanup_ports(base_port, 2);
+
+    let mut supervisor = start_supervisor_with_api(2, base_port, api_port);
+
+    // Wait for supervisor API and workers
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Worker 1 should be healthy"
+    );
+    assert!(
+        wait_for_healthy(base_port + 1, Duration::from_secs(10)),
+        "Worker 2 should be healthy"
+    );
+
+    // Wait for health checks to propagate to supervisor
+    std::thread::sleep(Duration::from_millis(1000));
+
+    // Get workers list
+    let workers = get_workers_list(api_port).expect("Should get workers list");
+    assert_eq!(workers["total_count"], 2);
+    // Note: healthy_count may lag behind due to health check interval
+    assert_eq!(workers["workers"].as_array().unwrap().len(), 2);
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 2);
+}
+
+#[test]
+fn test_supervisor_api_spawn_worker() {
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4050;
+    let api_port = 9050;
+    cleanup_ports(base_port, 3);
+
+    let mut supervisor = start_supervisor_with_api(1, base_port, api_port);
+
+    // Wait for initial worker
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Initial worker should be healthy"
+    );
+
+    // Spawn a new worker
+    let spawn_result = spawn_worker_api(api_port).expect("Should spawn worker");
+    assert!(spawn_result["id"].as_str().is_some());
+    let new_port = spawn_result["port"].as_u64().unwrap() as u16;
+
+    // Wait for new worker to be healthy
+    assert!(
+        wait_for_healthy(new_port, Duration::from_secs(10)),
+        "Spawned worker should become healthy"
+    );
+
+    // Verify we now have 2 workers
+    let workers = get_workers_list(api_port).expect("Should get workers list");
+    assert_eq!(workers["total_count"], 2);
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 3);
+}
+
+#[test]
+fn test_supervisor_api_kill_worker() {
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4060;
+    let api_port = 9060;
+    cleanup_ports(base_port, 2);
+
+    let mut supervisor = start_supervisor_with_api(1, base_port, api_port);
+
+    // Wait for worker
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Worker should be healthy"
+    );
+
+    // Get worker ID
+    let workers = get_workers_list(api_port).expect("Should get workers list");
+    let worker_id = workers["workers"][0]["id"].as_str().unwrap();
+
+    // Kill the worker via API
+    let kill_result = kill_worker_api(api_port, worker_id).expect("Should kill worker");
+    assert!(kill_result["message"].as_str().is_some());
+
+    // Worker should be down
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        get_worker_status(base_port).is_none(),
+        "Worker should be down after kill"
+    );
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 2);
+}
+
+#[test]
+fn test_supervisor_api_restart_worker() {
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4070;
+    let api_port = 9070;
+    cleanup_ports(base_port, 2);
+
+    let mut supervisor = start_supervisor_with_api(1, base_port, api_port);
+
+    // Wait for worker
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Worker should be healthy"
+    );
+
+    // Get original worker ID
+    let workers = get_workers_list(api_port).expect("Should get workers list");
+    let old_worker_id = workers["workers"][0]["id"].as_str().unwrap().to_string();
+
+    // Restart the worker via API
+    let restart_result =
+        restart_worker_api(api_port, &old_worker_id).expect("Should restart worker");
+    let new_worker_id = restart_result["id"].as_str().unwrap();
+
+    // IDs should be different
+    assert_ne!(
+        old_worker_id, new_worker_id,
+        "New worker should have different ID"
+    );
+
+    // Same port
+    assert_eq!(restart_result["port"].as_u64().unwrap() as u16, base_port);
+
+    // Wait for new worker to be healthy
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Restarted worker should become healthy"
+    );
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 2);
+}
+
 #[test]
 fn test_graceful_shutdown() {
     // Skip if worker binary doesn't exist
