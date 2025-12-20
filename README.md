@@ -2,17 +2,17 @@
 
 Stateless, deterministic execution substrate for LLM inference. Receives commands from L1 orchestrator, executes tasks using the L0 runtime, and emits factual events back.
 
-## Overview
+## 📖 Overview
 
 L0 Worker is a serverless-first execution layer that:
 
-- Receives task submissions via HTTP/SSE
-- Executes LLM inference using `@ai2070/l0` + Vercel AI SDK
-- Streams events back to L1 orchestrator
-- Enforces backpressure by silence (no `TASK_ACCEPTED` = rejection)
-- Supports deterministic replay of recorded events
+- 📥 Receives task submissions via HTTP/SSE
+- 🤖 Executes LLM inference using `@ai2070/l0` + Vercel AI SDK
+- 📡 Streams events back to L1 orchestrator
+- 🔇 Enforces backpressure by silence (no `TASK_ACCEPTED` = rejection)
+- 🔁 Supports deterministic replay of recorded events
 
-## Stack
+## 🛠️ Stack
 
 - **Runtime:** Node.js + TypeScript
 - **Inference:** `@ai2070/l0` (streaming runtime, retry, fallbacks, guardrails)
@@ -20,13 +20,13 @@ L0 Worker is a serverless-first execution layer that:
 - **Validation:** Zod
 - **Deployment:** Vercel Serverless Functions
 
-## Installation
+## 📦 Installation
 
 ```bash
 npm install
 ```
 
-## Development
+## 💻 Development
 
 ```bash
 # Local development with tsx
@@ -42,7 +42,7 @@ npm run lint
 npm run build
 ```
 
-## API Endpoints
+## 🌐 API Endpoints
 
 ### POST /api/submit
 
@@ -111,7 +111,7 @@ curl -X POST http://localhost:3000/api/config \
   }'
 ```
 
-## Inference Order
+## 📋 Inference Order
 
 Every task submission requires an `order` that defines execution and output contract:
 
@@ -149,7 +149,7 @@ Every task submission requires an `order` that defines execution and output cont
 | `tokens` | Token-by-token stream |
 | `json` | Structured JSON with schema validation |
 
-## Authentication
+## 🔐 Authentication
 
 Ephemeral, single-invocation auth with HMAC verification:
 
@@ -173,12 +173,12 @@ const token = createHmac("sha256", L0_AUTH_SECRET)
   .digest("base64");
 ```
 
-- Token validated once per request via HMAC signature
-- Never stored, never reused
-- Freshness check: `now - issued_at < ttl`
-- If `L0_AUTH_SECRET` is not set, signature verification is skipped (dev mode)
+- ✅ Token validated once per request via HMAC signature
+- 🚫 Never stored, never reused
+- ⏱️ Freshness check: `now - issued_at < ttl`
+- 🔓 If `L0_AUTH_SECRET` is not set, signature verification is skipped (dev mode)
 
-## Events
+## 📤 Events
 
 ### Outbound (Worker → L1)
 
@@ -204,7 +204,7 @@ L0 runtime events are passed through directly to L1:
 - `TIMEOUT_TRIGGERED`, `NETWORK_ERROR`
 - And more (see [API.md](./API.md))
 
-## Backpressure
+## ⏸️ Backpressure
 
 L0 enforces backpressure by silence:
 
@@ -215,17 +215,17 @@ L0 enforces backpressure by silence:
 
 No queue. No buffering. No rejection event.
 
-## Replay
+## 🔁 Replay
 
 Replay re-emits recorded facts. It does NOT re-execute.
 
 Replay must **NEVER**:
-- Regenerate tokens differently
-- Re-invoke tools with side effects
-- Fabricate progress events
-- Emit events that weren't originally recorded
+- ❌ Regenerate tokens differently
+- ❌ Re-invoke tools with side effects
+- ❌ Fabricate progress events
+- ❌ Emit events that weren't originally recorded
 
-## Configuration
+## ⚙️ Configuration
 
 ### Deployment Presets
 
@@ -256,7 +256,7 @@ All variables override preset defaults:
 | `L0_AUTH_SECRET` | Shared secret for HMAC auth (required in production) |
 | `OPENAI_API_KEY` | OpenAI API key |
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 l0-worker/
@@ -280,6 +280,6 @@ l0-worker/
 └── package.json
 ```
 
-## License
+## 📄 License
 
 Apache-2.0
