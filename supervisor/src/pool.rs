@@ -38,6 +38,7 @@ pub struct PoolConfig {
     pub base_port: u16,
     pub binary_path: PathBuf,
     pub health_interval: Duration,
+    pub health_timeout: Duration,
     pub restart_delay: Duration,
     pub max_restart_delay: Duration,
     pub max_consecutive_failures: u32,
@@ -54,6 +55,7 @@ impl Default for PoolConfig {
             base_port: 3001,
             binary_path: PathBuf::from("./l0-worker"),
             health_interval: Duration::from_secs(5),
+            health_timeout: Duration::from_secs(5),
             restart_delay: Duration::from_secs(1),
             max_restart_delay: Duration::from_secs(30),
             max_consecutive_failures: 5,
@@ -107,7 +109,7 @@ impl WorkerPool {
         }
 
         let (event_tx, event_rx) = mpsc::channel(100);
-        let health_checker = HealthChecker::new(Duration::from_secs(5));
+        let health_checker = HealthChecker::new(config.health_timeout);
 
         Self {
             config,
@@ -527,6 +529,7 @@ mod tests {
             base_port: 3001,
             binary_path: PathBuf::from("./test"),
             health_interval: Duration::from_secs(5),
+            health_timeout: Duration::from_secs(5),
             restart_delay: Duration::from_millis(restart_delay_ms),
             max_restart_delay: Duration::from_millis(max_restart_delay_ms),
             max_consecutive_failures: 5,

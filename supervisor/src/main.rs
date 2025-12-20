@@ -30,6 +30,10 @@ struct Args {
     #[arg(long, default_value_t = 5000)]
     health_interval: u64,
 
+    /// Health check timeout in milliseconds
+    #[arg(long, default_value_t = 5000)]
+    health_timeout: u64,
+
     /// Initial restart delay in milliseconds
     #[arg(long, default_value_t = 1000)]
     restart_delay: u64,
@@ -98,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         base_port: args.base_port,
         binary_path: args.worker_binary,
         health_interval: Duration::from_millis(args.health_interval),
+        health_timeout: Duration::from_millis(args.health_timeout),
         restart_delay: Duration::from_millis(args.restart_delay),
         max_restart_delay: Duration::from_millis(args.max_restart_delay),
         max_consecutive_failures: args.max_failures,

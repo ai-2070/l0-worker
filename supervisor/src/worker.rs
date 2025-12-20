@@ -127,18 +127,16 @@ impl Worker {
                                     continue;
                                 }
                                 "worker.draining" => {
-                                    let worker_id = match event
-                                        .get("workerId")
-                                        .and_then(|v| v.as_str())
-                                    {
-                                        Some(id) => id.to_string(),
-                                        None => {
-                                            tracing::warn!(
+                                    let worker_id =
+                                        match event.get("workerId").and_then(|v| v.as_str()) {
+                                            Some(id) => id.to_string(),
+                                            None => {
+                                                tracing::warn!(
                                                 "worker.draining event missing 'workerId' field"
                                             );
-                                            String::new()
-                                        }
-                                    };
+                                                String::new()
+                                            }
+                                        };
                                     let _ = tx.send(WorkerEvent::Draining { worker_id }).await;
                                     continue;
                                 }
