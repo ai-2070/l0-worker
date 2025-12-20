@@ -425,6 +425,7 @@ Response:
 |--------|-------------|---------|
 | `-w, --workers` | Number of workers | CPU count |
 | `-p, --base-port` | Starting port for workers | 3001 |
+| `--max-port` | Maximum allowed port number | 49151 |
 | `--api-port` | Supervisor API port | 9000 |
 | `--health-interval` | Health check interval (ms) | 2000 |
 | `--health-timeout` | Health check timeout (ms) | 2000 |

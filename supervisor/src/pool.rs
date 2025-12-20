@@ -52,6 +52,10 @@ pub struct PoolConfig {
     pub openai_api_key: Option<String>,
     pub anthropic_api_key: Option<String>,
     pub env_vars: Vec<(String, String)>,
+    /// Maximum port number allowed for worker allocation.
+    /// Defaults to 49151 (end of registered ports range).
+    /// Set higher (up to 65535) to allow ephemeral ports.
+    pub max_port: u16,
 }
 
 impl Default for PoolConfig {
@@ -70,6 +74,7 @@ impl Default for PoolConfig {
             openai_api_key: None,
             anthropic_api_key: None,
             env_vars: Vec::new(),
+            max_port: DEFAULT_MAX_PORT,
         }
     }
 }
@@ -96,6 +101,10 @@ impl std::fmt::Display for PoolError {
 }
 
 impl std::error::Error for PoolError {}
+
+/// Default maximum port number for worker allocation.
+/// Ports above this are in the dynamic/private range (ephemeral ports).
+const DEFAULT_MAX_PORT: u16 = 49151;
 
 /// Events emitted by the worker pool
 #[derive(Debug, Clone)]
@@ -128,14 +137,29 @@ impl WorkerPool {
     /// Create a new worker pool
     ///
     /// # Panics
-    /// Panics if base_port + worker_count - 1 would overflow u16
+    /// Panics if base_port + worker_count - 1 would overflow u16 or exceed max_port
     pub fn new(config: PoolConfig, pool_event_tx: mpsc::Sender<PoolEvent>) -> Self {
-        // Validate port range won't overflow
+        // Validate port range won't overflow and stays within valid port range
         if config.worker_count > 0 {
-            config
+            let highest_port = config
                 .base_port
                 .checked_add((config.worker_count - 1) as u16)
                 .expect("Port range overflow: base_port + worker_count exceeds u16::MAX");
+            assert!(
+                highest_port <= config.max_port,
+                "Port range exceeds max_port ({}): base_port {} + {} workers would use port {}",
+                config.max_port,
+                config.base_port,
+                config.worker_count,
+                highest_port
+            );
+        } else {
+            assert!(
+                config.base_port <= config.max_port,
+                "base_port {} exceeds max_port ({})",
+                config.base_port,
+                config.max_port
+            );
         }
 
         let (event_tx, event_rx) = mpsc::channel(100);
@@ -805,6 +829,7 @@ mod tests {
             openai_api_key: None,
             anthropic_api_key: None,
             env_vars: Vec::new(),
+            max_port: super::DEFAULT_MAX_PORT,
         }
     }
 
@@ -907,5 +932,92 @@ mod tests {
             restart_at: Instant::now(),
         };
         assert!(matches!(failed1, WorkerState::Failed { .. }));
+    }
+
+    #[test]
+    fn test_port_validation_valid_range() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 10,
+            base_port: 3001,
+            ..Default::default()
+        };
+        // Should not panic - ports 3001-3010 are valid
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    fn test_port_validation_at_max_port() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 1,
+            base_port: super::DEFAULT_MAX_PORT,
+            ..Default::default()
+        };
+        // Should not panic - port 49151 is exactly at max_port
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    #[should_panic(expected = "Port range exceeds max_port")]
+    fn test_port_validation_exceeds_max_port() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 10,
+            base_port: super::DEFAULT_MAX_PORT - 5, // Would need ports 49146-49155, exceeding max_port
+            ..Default::default()
+        };
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    #[should_panic(expected = "base_port")]
+    fn test_port_validation_base_port_above_max() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 1,
+            base_port: super::DEFAULT_MAX_PORT + 1,
+            ..Default::default()
+        };
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    fn test_port_validation_zero_workers() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 0,
+            base_port: 3001,
+            ..Default::default()
+        };
+        // Should not panic - zero workers is valid
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    fn test_port_validation_custom_max_port() {
+        let (tx, _rx) = mpsc::channel(1);
+        // Allow ephemeral ports by setting max_port higher
+        let config = PoolConfig {
+            worker_count: 10,
+            base_port: 50000,
+            max_port: 65535,
+            ..Default::default()
+        };
+        // Should not panic - ephemeral ports allowed with custom max_port
+        let _pool = WorkerPool::new(config, tx);
+    }
+
+    #[test]
+    #[should_panic(expected = "Port range exceeds max_port")]
+    fn test_port_validation_custom_max_port_exceeded() {
+        let (tx, _rx) = mpsc::channel(1);
+        let config = PoolConfig {
+            worker_count: 10,
+            base_port: 50000,
+            max_port: 50005, // Only allows ports 50000-50005, but we need 50000-50009
+            ..Default::default()
+        };
+        let _pool = WorkerPool::new(config, tx);
     }
 }
