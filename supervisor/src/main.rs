@@ -27,15 +27,15 @@ struct Args {
     base_port: u16,
 
     /// Health check interval in milliseconds
-    #[arg(long, default_value_t = 5000)]
+    #[arg(long, default_value_t = 2000)]
     health_interval: u64,
 
     /// Health check timeout in milliseconds
-    #[arg(long, default_value_t = 5000)]
+    #[arg(long, default_value_t = 2000)]
     health_timeout: u64,
 
     /// Initial restart delay in milliseconds
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 500)]
     restart_delay: u64,
 
     /// Maximum restart delay in milliseconds (exponential backoff cap)
@@ -51,7 +51,7 @@ struct Args {
     max_failures: u32,
 
     /// Maximum consecutive unhealthy health checks before killing a worker
-    #[arg(long, default_value_t = 3)]
+    #[arg(long, default_value_t = 2)]
     max_unhealthy_checks: u32,
 
     /// Path to l0-worker binary

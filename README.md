@@ -319,12 +319,12 @@ cargo build --release
 |--------|-------------|---------|
 | `-w, --workers` | Number of workers | CPU count |
 | `-p, --base-port` | Starting port | 3001 |
-| `--health-interval` | Health check interval (ms) | 5000 |
-| `--health-timeout` | Health check timeout (ms) | 5000 |
-| `--restart-delay` | Initial restart delay (ms) | 1000 |
+| `--health-interval` | Health check interval (ms) | 2000 |
+| `--health-timeout` | Health check timeout (ms) | 2000 |
+| `--restart-delay` | Initial restart delay (ms) | 500 |
 | `--max-restart-delay` | Max restart delay (ms) | 30000 |
 | `--max-failures` | Max consecutive failures before stopping | 5 |
-| `--max-unhealthy-checks` | Max consecutive unhealthy checks before killing | 3 |
+| `--max-unhealthy-checks` | Max consecutive unhealthy checks before killing | 2 |
 | `--shutdown-timeout` | Graceful shutdown timeout (ms) | 30000 |
 
 ### Building the Supervisor
