@@ -221,14 +221,16 @@ impl WorkerPool {
                 }
             }
 
-            WorkerEvent::Exited { exit_code } => {
-                // Find which worker exited
+            WorkerEvent::Exited {
+                worker_id,
+                exit_code,
+            } => {
+                // Look up the specific worker that exited
                 let mut exited_worker: Option<(String, u32)> = None;
 
-                for (worker_id, managed) in &mut self.workers {
+                if let Some(managed) = self.workers.get_mut(&worker_id) {
                     // Skip if already processed (Failed state set by health check)
-                    if !managed.worker.is_running()
-                        && managed.state != WorkerState::Stopped
+                    if managed.state != WorkerState::Stopped
                         && !matches!(managed.state, WorkerState::Failed { .. })
                     {
                         if exit_code == Some(0) {
@@ -253,7 +255,6 @@ impl WorkerPool {
 
                             exited_worker = Some((worker_id.clone(), failures));
                         }
-                        break;
                     }
                 }
 
@@ -357,6 +358,15 @@ impl WorkerPool {
 
                             managed.consecutive_failures += 1;
                             let failures = managed.consecutive_failures;
+
+                            // Send unhealthy event first for consistency with Exited handler
+                            let _ = self
+                                .pool_event_tx
+                                .send(PoolEvent::WorkerUnhealthy {
+                                    worker_id: worker_id.clone(),
+                                    reason: "Process exited unexpectedly".to_string(),
+                                })
+                                .await;
 
                             if failures <= self.config.max_consecutive_failures {
                                 let delay =

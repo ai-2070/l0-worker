@@ -15,7 +15,10 @@ pub enum WorkerEvent {
     /// Worker is draining (graceful shutdown)
     Draining { worker_id: String },
     /// Worker process exited
-    Exited { exit_code: Option<i32> },
+    Exited {
+        worker_id: String,
+        exit_code: Option<i32>,
+    },
     /// Stdout line (for debugging)
     Stdout(String),
     /// Stderr line (for debugging)
@@ -157,7 +160,10 @@ impl Worker {
                     let code = status.code();
                     let _ = self
                         .event_tx
-                        .send(WorkerEvent::Exited { exit_code: code })
+                        .send(WorkerEvent::Exited {
+                            worker_id: self.config.worker_id.clone(),
+                            exit_code: code,
+                        })
                         .await;
                     code
                 }
@@ -165,7 +171,10 @@ impl Worker {
                     error!(error = %e, "Failed to wait for worker");
                     let _ = self
                         .event_tx
-                        .send(WorkerEvent::Exited { exit_code: None })
+                        .send(WorkerEvent::Exited {
+                            worker_id: self.config.worker_id.clone(),
+                            exit_code: None,
+                        })
                         .await;
                     None
                 }
