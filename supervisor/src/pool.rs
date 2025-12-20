@@ -226,7 +226,11 @@ impl WorkerPool {
                 let mut exited_worker: Option<(String, u32)> = None;
 
                 for (worker_id, managed) in &mut self.workers {
-                    if !managed.worker.is_running() && managed.state != WorkerState::Stopped {
+                    // Skip if already processed (Failed state set by health check)
+                    if !managed.worker.is_running()
+                        && managed.state != WorkerState::Stopped
+                        && !matches!(managed.state, WorkerState::Failed { .. })
+                    {
                         if exit_code == Some(0) {
                             info!(worker_id = %worker_id, "Worker exited cleanly");
                             managed.state = WorkerState::Stopped;
