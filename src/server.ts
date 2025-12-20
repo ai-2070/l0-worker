@@ -276,12 +276,38 @@ async function handleConfig(req: Request, server: { requestIP(req: Request): { a
 /**
  * Handle POST /api/drain - Trigger graceful shutdown
  * Called by supervisor for cross-platform graceful shutdown.
- * Only allowed from localhost.
+ * Allowed from localhost without auth, or from anywhere with valid auth.
  */
-function handleDrain(req: Request, serverInterface: { requestIP(req: Request): { address: string } | null }): Response {
-  // Only allow from localhost
+async function handleDrain(req: Request, serverInterface: { requestIP(req: Request): { address: string } | null }): Promise<Response> {
+  // Parse optional JSON body for auth
+  let body: { auth?: { token: string; issued_at: number; ttl: number }; worker_id?: string } = {};
+  try {
+    const text = await req.text();
+    if (text) {
+      body = JSON.parse(text);
+    }
+  } catch {
+    // Empty body is fine for localhost
+  }
+
+  // Allow localhost without auth, otherwise require valid auth
   if (!isLocalhost(req, serverInterface)) {
-    return Response.json({ error: "Drain only allowed from localhost" }, { status: 403 });
+    if (!body.auth) {
+      return Response.json({ error: "Auth required for non-localhost requests" }, { status: 401 });
+    }
+    // Use worker_id from body, or fall back to current worker's ID
+    const targetWorkerId = body.worker_id || worker.workerId;
+    const authResult = validateAuth(body.auth, targetWorkerId);
+    if (!authResult.valid) {
+      return Response.json(
+        { error: "Auth validation failed", reason: authResult.reason },
+        { status: 401 }
+      );
+    }
+    // Verify worker ID matches if provided
+    if (body.worker_id && body.worker_id !== worker.workerId) {
+      return Response.json({ error: "Worker ID mismatch" }, { status: 400 });
+    }
   }
 
   console.log(JSON.stringify({ event: "worker.draining", workerId: worker.workerId }));
@@ -326,7 +352,7 @@ async function handleRequest(req: Request, server: { requestIP(req: Request): { 
     }
 
     if (path === "/api/drain" && method === "POST") {
-      return handleDrain(req, server);
+      return await handleDrain(req, server);
     }
 
     // Method not allowed for known paths

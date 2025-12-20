@@ -113,10 +113,26 @@ curl -X POST http://localhost:3000/api/config \
 
 ### POST /api/drain
 
-Trigger graceful shutdown (localhost only). Used by supervisor for cross-platform graceful shutdown.
+Trigger graceful shutdown. Used by supervisor for cross-platform graceful shutdown.
+
+- **Localhost**: No auth required
+- **Non-localhost**: Requires valid auth token
 
 ```bash
+# From localhost (no auth needed)
 curl -X POST http://localhost:3000/api/drain
+
+# From remote (auth required)
+curl -X POST http://worker-host:3000/api/drain \
+  -H "Content-Type: application/json" \
+  -d '{
+    "worker_id": "...",
+    "auth": {
+      "token": "...",
+      "issued_at": 1702900000000,
+      "ttl": 30000
+    }
+  }'
 ```
 
 Response:
