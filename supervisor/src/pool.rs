@@ -320,12 +320,58 @@ impl WorkerPool {
 
                 HealthCheckResult::Unhealthy(reason) | HealthCheckResult::Unreachable(reason) => {
                     if let Some(managed) = self.workers.get_mut(&worker_id) {
+                        // Check if the worker process is still running
+                        let is_running = managed.worker.is_running();
+
                         if managed.state == WorkerState::Healthy {
                             warn!(
                                 worker_id = %worker_id,
                                 reason = %reason,
+                                is_running = is_running,
                                 "Worker became unhealthy"
                             );
+                        }
+
+                        // If worker process crashed, schedule restart
+                        if !is_running && !matches!(managed.state, WorkerState::Failed { .. }) && managed.state != WorkerState::Stopped {
+                            warn!(
+                                worker_id = %worker_id,
+                                "Worker process exited, scheduling restart"
+                            );
+
+                            managed.consecutive_failures += 1;
+                            let failures = managed.consecutive_failures;
+
+                            if failures <= self.config.max_consecutive_failures {
+                                let delay = Self::calculate_restart_delay_static(
+                                    &self.config,
+                                    failures,
+                                );
+                                managed.state = WorkerState::Failed {
+                                    restart_at: Instant::now() + delay,
+                                };
+
+                                let _ = self
+                                    .pool_event_tx
+                                    .send(PoolEvent::WorkerRestarting {
+                                        worker_id: worker_id.clone(),
+                                        attempt: failures,
+                                    })
+                                    .await;
+                            } else {
+                                managed.state = WorkerState::Stopped;
+                                error!(
+                                    worker_id = %worker_id,
+                                    failures = failures,
+                                    "Worker exceeded max restart attempts"
+                                );
+                                let _ = self
+                                    .pool_event_tx
+                                    .send(PoolEvent::WorkerFailed {
+                                        worker_id: worker_id.clone(),
+                                    })
+                                    .await;
+                            }
                         }
                     }
                 }
