@@ -41,3 +41,5 @@ tmp/
 temp/
 *.tmp
 l0-docs/
+*.bun-build
+supervisor/target/

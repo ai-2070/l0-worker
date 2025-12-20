@@ -46,6 +46,12 @@ export const config = {
   protocolVersion: "1.0.0",
 
   /**
+   * HTTP server port for standalone mode.
+   * Set via PORT env var, defaults to 3000.
+   */
+  port: parseIntOrDefault(process.env.PORT, 3000),
+
+  /**
    * Serverless function timeout in ms.
    * Set to 0 to disable drain timer (for long-running workers).
    * Vercel defaults: Hobby=10s, Pro=60s, Enterprise=900s
