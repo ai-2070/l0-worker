@@ -383,20 +383,15 @@ const readySignal = {
 };
 console.log(JSON.stringify(readySignal));
 
-// Graceful shutdown
-process.on("SIGTERM", () => {
+// Graceful shutdown handler
+function handleShutdown() {
   console.log(JSON.stringify({ event: "worker.draining", workerId: worker.workerId }));
   // Allow in-flight requests to complete
   setTimeout(() => {
     server.stop();
     process.exit(0);
   }, config.drainBufferMs);
-});
+}
 
-process.on("SIGINT", () => {
-  console.log(JSON.stringify({ event: "worker.draining", workerId: worker.workerId }));
-  setTimeout(() => {
-    server.stop();
-    process.exit(0);
-  }, config.drainBufferMs);
-});
+process.on("SIGTERM", handleShutdown);
+process.on("SIGINT", handleShutdown);
