@@ -254,7 +254,7 @@ export function createWorkerInstance(): VercelWorker {
   return workerInstance;
 }
 
-function classifyError(error: unknown): FailureClass {
+export function classifyError(error: unknown): FailureClass {
   if (!(error instanceof Error)) {
     return FailureClass.UNKNOWN;
   }
@@ -294,7 +294,7 @@ function classifyError(error: unknown): FailureClass {
   return FailureClass.UNKNOWN;
 }
 
-function isRetryable(failureClass: FailureClass): boolean {
+export function isRetryable(failureClass: FailureClass): boolean {
   switch (failureClass) {
     case FailureClass.TIMEOUT:
     case FailureClass.RATE_LIMITED:

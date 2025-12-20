@@ -7,8 +7,10 @@
     "dev": "tsx watch src/index.ts",
     "dev:vercel": "vercel dev",
     "build": "tsc",
-    "test": "vitest",
-    "test:run": "vitest run",
+    "test": "vitest --exclude src/e2e/**",
+    "test:run": "vitest run --exclude src/e2e/**",
+    "test:e2e": "vitest run --dir src/e2e",
+    "test:all": "vitest run",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -21,6 +23,7 @@
   "devDependencies": {
     "@types/node": "^22.19.3",
     "@vercel/node": "^5.5.16",
+    "dotenv": "^17.2.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vercel": "^50.1.3",

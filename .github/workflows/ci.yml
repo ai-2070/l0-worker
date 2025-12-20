@@ -31,3 +31,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # Runs unit tests only (excludes E2E tests).
+      # E2E tests require OPENAI_API_KEY and make real API calls.
+      # Run E2E tests locally with: npm run test:e2e
+      - name: Test
+        run: npm run test:run
