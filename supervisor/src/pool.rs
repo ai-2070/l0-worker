@@ -179,7 +179,7 @@ impl WorkerPool {
         Ok(())
     }
 
-    /// Run the pool's event loop (blocks forever)
+    /// Run the pool's event loop
     pub async fn run(&mut self) {
         let mut health_interval = tokio::time::interval(self.config.health_interval);
 
@@ -195,25 +195,6 @@ impl WorkerPool {
                     self.check_all_health().await;
                     self.process_restarts().await;
                 }
-            }
-        }
-    }
-
-    /// Run a single iteration of the event loop with timeout
-    /// Returns true if work was done, false if timeout expired
-    pub async fn run_once(&mut self, timeout: Duration) -> bool {
-        tokio::select! {
-            // Handle worker events
-            Some(event) = self.event_rx.recv() => {
-                self.handle_worker_event(event).await;
-                true
-            }
-
-            // Timeout - do health check
-            _ = tokio::time::sleep(timeout) => {
-                self.check_all_health().await;
-                self.process_restarts().await;
-                true
             }
         }
     }
@@ -616,34 +597,6 @@ impl WorkerPool {
     pub fn worker_ports(&self) -> Vec<u16> {
         self.workers.values().map(|m| m.worker.port()).collect()
     }
-
-    /// Get status of all workers for API
-    pub fn get_workers_status(&self) -> Vec<WorkerStatus> {
-        self.workers
-            .iter()
-            .map(|(id, managed)| WorkerStatus {
-                id: id.clone(),
-                port: managed.worker.port(),
-                state: match &managed.state {
-                    WorkerState::Starting => "starting".to_string(),
-                    WorkerState::Healthy => "healthy".to_string(),
-                    WorkerState::Draining => "draining".to_string(),
-                    WorkerState::Failed { .. } => "failed".to_string(),
-                    WorkerState::Stopped => "stopped".to_string(),
-                },
-                consecutive_failures: managed.consecutive_failures,
-            })
-            .collect()
-    }
-}
-
-/// Worker status for API responses
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct WorkerStatus {
-    pub id: String,
-    pub port: u16,
-    pub state: String,
-    pub consecutive_failures: u32,
 }
 
 #[cfg(test)]
