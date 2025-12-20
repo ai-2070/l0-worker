@@ -444,9 +444,15 @@ impl WorkerPool {
 
     /// Calculate restart delay with exponential backoff (static version for borrow checker)
     fn calculate_restart_delay_static(config: &PoolConfig, failures: u32) -> Duration {
-        let delay_ms =
-            config.restart_delay.as_millis() as u64 * 2u64.pow(failures.saturating_sub(1));
+        let base_ms = config.restart_delay.as_millis() as u64;
         let max_ms = config.max_restart_delay.as_millis() as u64;
+
+        // Use checked arithmetic to prevent overflow for large failure counts
+        let delay_ms = 2u64
+            .checked_pow(failures.saturating_sub(1))
+            .and_then(|multiplier| base_ms.checked_mul(multiplier))
+            .unwrap_or(max_ms);
+
         Duration::from_millis(delay_ms.min(max_ms))
     }
 
