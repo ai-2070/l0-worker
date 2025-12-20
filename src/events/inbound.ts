@@ -61,9 +61,11 @@ export const TaskReplayRequestSchema = z.object({
 
 /**
  * WORKER_CONFIG_UPDATE - Hot reconfiguration without redeploy.
+ * Auth is optional - localhost requests don't require auth.
  */
 export const WorkerConfigUpdateSchema = z.object({
   type: z.literal("WORKER_CONFIG_UPDATE"),
+  auth: AuthEnvelopeSchema.optional(),
   worker_id: z.string(),
   max_concurrency: z.number().optional(),
   resource_caps: z.record(z.string(), z.number()).optional(),

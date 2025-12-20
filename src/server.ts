@@ -208,9 +208,20 @@ async function handleReplay(req: Request): Promise<Response> {
 }
 
 /**
- * Handle POST /api/config - Hot configuration update
+ * Check if request originates from localhost
  */
-async function handleConfig(req: Request): Promise<Response> {
+function isLocalhost(req: Request, server: { requestIP(req: Request): { address: string } | null }): boolean {
+  const ip = server.requestIP(req);
+  if (!ip) return false;
+  const addr = ip.address;
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+}
+
+/**
+ * Handle POST /api/config - Hot configuration update
+ * Allowed from localhost (no auth) or with valid auth from anywhere
+ */
+async function handleConfig(req: Request, server: { requestIP(req: Request): { address: string } | null }): Promise<Response> {
   let body: unknown;
   try {
     body = await req.json();
@@ -228,6 +239,20 @@ async function handleConfig(req: Request): Promise<Response> {
   }
 
   const configUpdate = parseResult.data;
+
+  // Allow localhost without auth, otherwise require valid auth
+  if (!isLocalhost(req, server)) {
+    if (!configUpdate.auth) {
+      return Response.json({ error: "Auth required for non-localhost requests" }, { status: 401 });
+    }
+    const authResult = validateAuth(configUpdate.auth, configUpdate.worker_id);
+    if (!authResult.valid) {
+      return Response.json(
+        { error: "Auth validation failed", reason: authResult.reason },
+        { status: 401 }
+      );
+    }
+  }
 
   // Verify worker ID matches
   if (configUpdate.worker_id !== worker.workerId) {
@@ -251,7 +276,7 @@ async function handleConfig(req: Request): Promise<Response> {
 /**
  * Main request router
  */
-async function handleRequest(req: Request): Promise<Response> {
+async function handleRequest(req: Request, server: { requestIP(req: Request): { address: string } | null }): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
   const method = req.method;
@@ -271,7 +296,7 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (path === "/api/config" && method === "POST") {
-      return await handleConfig(req);
+      return await handleConfig(req, server);
     }
 
     // Method not allowed for known paths
