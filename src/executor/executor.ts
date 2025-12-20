@@ -247,12 +247,24 @@ async function executeStructured(
   if (streamObjectResult) {
     try {
       validatedOutput = await streamObjectResult.object;
-    } catch {
+    } catch (objectError) {
       // If object parsing fails, fall back to parsing the collected content
-      validatedOutput = JSON.parse(content);
+      try {
+        validatedOutput = JSON.parse(content);
+      } catch (parseError) {
+        throw new OutputValidationError(
+          `Failed to parse structured output: ${parseError instanceof Error ? parseError.message : "Invalid JSON"}`,
+        );
+      }
     }
   } else {
-    validatedOutput = JSON.parse(content);
+    try {
+      validatedOutput = JSON.parse(content);
+    } catch (parseError) {
+      throw new OutputValidationError(
+        `Failed to parse structured output: ${parseError instanceof Error ? parseError.message : "Invalid JSON"}`,
+      );
+    }
   }
 
   return {
