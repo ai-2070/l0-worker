@@ -94,7 +94,18 @@ pub struct WorkerPool {
 
 impl WorkerPool {
     /// Create a new worker pool
+    ///
+    /// # Panics
+    /// Panics if base_port + worker_count - 1 would overflow u16
     pub fn new(config: PoolConfig, pool_event_tx: mpsc::Sender<PoolEvent>) -> Self {
+        // Validate port range won't overflow
+        if config.worker_count > 0 {
+            config
+                .base_port
+                .checked_add((config.worker_count - 1) as u16)
+                .expect("Port range overflow: base_port + worker_count exceeds u16::MAX");
+        }
+
         let (event_tx, event_rx) = mpsc::channel(100);
         let health_checker = HealthChecker::new(Duration::from_secs(5));
 
@@ -381,20 +392,24 @@ impl WorkerPool {
     /// Process pending restarts
     async fn process_restarts(&mut self) {
         let now = Instant::now();
-        let mut to_restart: Vec<(String, u16)> = Vec::new();
+        let mut to_restart: Vec<(String, u16, u32)> = Vec::new();
 
         for (worker_id, managed) in &self.workers {
             if let WorkerState::Failed { restart_at } = managed.state {
                 if now >= restart_at
                     && managed.consecutive_failures <= self.config.max_consecutive_failures
                 {
-                    to_restart.push((worker_id.clone(), managed.worker.port()));
+                    to_restart.push((
+                        worker_id.clone(),
+                        managed.worker.port(),
+                        managed.consecutive_failures,
+                    ));
                 }
             }
         }
 
-        for (worker_id, port) in to_restart {
-            info!(worker_id = %worker_id, port = port, "Restarting worker");
+        for (worker_id, port, failure_count) in to_restart {
+            info!(worker_id = %worker_id, port = port, attempt = failure_count, "Restarting worker");
 
             // Remove old worker
             self.workers.remove(&worker_id);
@@ -402,6 +417,11 @@ impl WorkerPool {
             // Spawn new worker
             if let Err(e) = self.spawn_worker(&worker_id, port).await {
                 error!(worker_id = %worker_id, error = %e, "Failed to restart worker");
+            } else {
+                // Preserve the failure count from before restart
+                if let Some(managed) = self.workers.get_mut(&worker_id) {
+                    managed.consecutive_failures = failure_count;
+                }
             }
         }
     }

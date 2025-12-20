@@ -58,7 +58,6 @@ impl HealthCheckResult {
 /// Health checker for worker endpoints
 pub struct HealthChecker {
     client: Client,
-    timeout: Duration,
 }
 
 impl HealthChecker {
@@ -69,7 +68,7 @@ impl HealthChecker {
             .build()
             .expect("Failed to create HTTP client");
 
-        Self { client, timeout }
+        Self { client }
     }
 
     /// Check health of a worker at the given port
