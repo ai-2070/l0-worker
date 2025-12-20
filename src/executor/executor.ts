@@ -178,8 +178,8 @@ async function executeStructured(
   let tokenCount = 0;
 
   // Store reference to streamObject result to access .object promise later
-  let streamObjectResult: Awaited<ReturnType<typeof streamObject>> | null =
-    null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let streamObjectResult: { object: Promise<unknown> } | null = null;
 
   const result = await l0({
     stream: () => {
@@ -246,7 +246,7 @@ async function executeStructured(
   let validatedOutput: unknown;
   if (streamObjectResult) {
     try {
-      validatedOutput = await streamObjectResult.object;
+      validatedOutput = await (streamObjectResult as { object: Promise<unknown> }).object;
     } catch (objectError) {
       // If object parsing fails, fall back to parsing the collected content
       try {

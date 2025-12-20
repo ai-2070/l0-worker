@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:vercel": "vercel dev",
+    "dev:standalone": "bun run src/server.ts",
     "build": "tsc",
+    "build:desktop": "bun build ./src/server.ts --compile --outfile dist/l0-worker",
     "test": "vitest --exclude src/e2e/**",
     "test:run": "vitest run --exclude src/e2e/**",
     "test:e2e": "vitest run --dir src/e2e",

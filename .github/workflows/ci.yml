@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, initial-implementation]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   build:
@@ -37,3 +37,51 @@ jobs:
       # Run E2E tests locally with: npm run test:e2e
       - name: Test
         run: npm run test:run
+
+  supervisor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: supervisor
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build worker binary
+        run: bun run build
+
+      - name: Check formatting
+        working-directory: supervisor
+        run: cargo fmt --check
+
+      - name: Clippy lint
+        working-directory: supervisor
+        run: cargo clippy -- -D warnings
+
+      - name: Build supervisor (debug)
+        working-directory: supervisor
+        run: cargo build
+
+      - name: Run supervisor tests
+        working-directory: supervisor
+        run: cargo test -- --test-threads=1
+
+      - name: Build supervisor (release)
+        working-directory: supervisor
+        run: cargo build --release
+
+      - name: Check binary size
+        run: ls -lh supervisor/target/release/l0-supervisor
