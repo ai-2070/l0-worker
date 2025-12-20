@@ -101,10 +101,9 @@ impl Worker {
                         if let Some(event_type) = event.get("event").and_then(|v| v.as_str()) {
                             match event_type {
                                 "worker.ready" => {
-                                    let port = event
-                                        .get("port")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0) as u16;
+                                    let port =
+                                        event.get("port").and_then(|v| v.as_u64()).unwrap_or(0)
+                                            as u16;
                                     let worker_id = event
                                         .get("workerId")
                                         .and_then(|v| v.as_str())
@@ -156,7 +155,10 @@ impl Worker {
             match child.wait().await {
                 Ok(status) => {
                     let code = status.code();
-                    let _ = self.event_tx.send(WorkerEvent::Exited { exit_code: code }).await;
+                    let _ = self
+                        .event_tx
+                        .send(WorkerEvent::Exited { exit_code: code })
+                        .await;
                     code
                 }
                 Err(e) => {
@@ -183,7 +185,7 @@ impl Worker {
             if let Some(pid) = child.id() {
                 info!(worker_id = %self.config.worker_id, pid = pid, "Sending SIGTERM to worker");
                 kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    .map_err(std::io::Error::other)?;
             }
         }
         Ok(())
@@ -211,9 +213,9 @@ impl Worker {
     pub fn is_running(&mut self) -> bool {
         if let Some(ref mut child) = self.child {
             match child.try_wait() {
-                Ok(None) => true, // Still running
+                Ok(None) => true,     // Still running
                 Ok(Some(_)) => false, // Exited
-                Err(_) => false, // Error checking
+                Err(_) => false,      // Error checking
             }
         } else {
             false

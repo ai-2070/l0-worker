@@ -126,7 +126,12 @@ impl HealthChecker {
         retry_delay: Duration,
     ) -> Option<WorkerStatus> {
         for attempt in 1..=max_attempts {
-            debug!(port = port, attempt = attempt, max = max_attempts, "Waiting for worker to be healthy");
+            debug!(
+                port = port,
+                attempt = attempt,
+                max = max_attempts,
+                "Waiting for worker to be healthy"
+            );
 
             match self.check(port).await {
                 HealthCheckResult::Healthy(status) if status.is_accepting() => {
@@ -155,5 +160,98 @@ impl HealthChecker {
 impl Default for HealthChecker {
     fn default() -> Self {
         Self::new(Duration::from_secs(5))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_status(state: &str, available_slots: u32) -> WorkerStatus {
+        WorkerStatus {
+            worker_id: "test-1".to_string(),
+            state: state.to_string(),
+            protocol_version: "1.0.0".to_string(),
+            max_concurrency: 64,
+            inflight: 0,
+            available_slots,
+            uptime_ms: 1000,
+            ts: 0,
+        }
+    }
+
+    #[test]
+    fn test_worker_status_is_accepting() {
+        assert!(make_status("READY", 64).is_accepting());
+        assert!(make_status("ACCEPTING", 64).is_accepting());
+        assert!(!make_status("DRAINING", 64).is_accepting());
+        assert!(!make_status("STOPPED", 64).is_accepting());
+        assert!(!make_status("", 64).is_accepting());
+    }
+
+    #[test]
+    fn test_worker_status_is_draining() {
+        assert!(make_status("DRAINING", 64).is_draining());
+        assert!(!make_status("READY", 64).is_draining());
+        assert!(!make_status("ACCEPTING", 64).is_draining());
+    }
+
+    #[test]
+    fn test_worker_status_has_capacity() {
+        assert!(make_status("READY", 64).has_capacity());
+        assert!(make_status("READY", 1).has_capacity());
+        assert!(!make_status("READY", 0).has_capacity());
+    }
+
+    #[test]
+    fn test_health_check_result_is_healthy() {
+        let healthy = HealthCheckResult::Healthy(make_status("READY", 64));
+        let unhealthy = HealthCheckResult::Unhealthy("error".to_string());
+        let unreachable = HealthCheckResult::Unreachable("timeout".to_string());
+
+        assert!(healthy.is_healthy());
+        assert!(!unhealthy.is_healthy());
+        assert!(!unreachable.is_healthy());
+    }
+
+    #[test]
+    fn test_worker_status_json_parsing() {
+        let json = r#"{
+            "workerId": "l0-1",
+            "state": "READY",
+            "protocolVersion": "1.0.0",
+            "maxConcurrency": 64,
+            "inflight": 5,
+            "availableSlots": 59,
+            "uptimeMs": 12345,
+            "ts": 1234567890
+        }"#;
+
+        let status: WorkerStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status.worker_id, "l0-1");
+        assert_eq!(status.state, "READY");
+        assert_eq!(status.max_concurrency, 64);
+        assert_eq!(status.inflight, 5);
+        assert_eq!(status.available_slots, 59);
+        assert!(status.is_accepting());
+        assert!(status.has_capacity());
+    }
+
+    #[test]
+    fn test_worker_status_json_parsing_minimal() {
+        // Test with only required fields (protocol_version and uptime_ms have defaults)
+        let json = r#"{
+            "workerId": "l0-1",
+            "state": "READY",
+            "maxConcurrency": 64,
+            "inflight": 0,
+            "availableSlots": 64,
+            "ts": 0
+        }"#;
+
+        let status: WorkerStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status.worker_id, "l0-1");
+        assert_eq!(status.protocol_version, ""); // default
+        assert_eq!(status.uptime_ms, 0); // default
     }
 }

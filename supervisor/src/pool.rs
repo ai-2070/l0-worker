@@ -230,10 +230,8 @@ impl WorkerPool {
                             let failures = managed.consecutive_failures;
 
                             // Calculate restart delay with exponential backoff
-                            let delay = Self::calculate_restart_delay_static(
-                                &self.config,
-                                failures,
-                            );
+                            let delay =
+                                Self::calculate_restart_delay_static(&self.config, failures);
                             managed.state = WorkerState::Failed {
                                 restart_at: Instant::now() + delay,
                             };
@@ -333,7 +331,10 @@ impl WorkerPool {
                         }
 
                         // If worker process crashed, schedule restart
-                        if !is_running && !matches!(managed.state, WorkerState::Failed { .. }) && managed.state != WorkerState::Stopped {
+                        if !is_running
+                            && !matches!(managed.state, WorkerState::Failed { .. })
+                            && managed.state != WorkerState::Stopped
+                        {
                             warn!(
                                 worker_id = %worker_id,
                                 "Worker process exited, scheduling restart"
@@ -343,10 +344,8 @@ impl WorkerPool {
                             let failures = managed.consecutive_failures;
 
                             if failures <= self.config.max_consecutive_failures {
-                                let delay = Self::calculate_restart_delay_static(
-                                    &self.config,
-                                    failures,
-                                );
+                                let delay =
+                                    Self::calculate_restart_delay_static(&self.config, failures);
                                 managed.state = WorkerState::Failed {
                                     restart_at: Instant::now() + delay,
                                 };
@@ -409,7 +408,8 @@ impl WorkerPool {
 
     /// Calculate restart delay with exponential backoff (static version for borrow checker)
     fn calculate_restart_delay_static(config: &PoolConfig, failures: u32) -> Duration {
-        let delay_ms = config.restart_delay.as_millis() as u64 * 2u64.pow(failures.saturating_sub(1));
+        let delay_ms =
+            config.restart_delay.as_millis() as u64 * 2u64.pow(failures.saturating_sub(1));
         let max_ms = config.max_restart_delay.as_millis() as u64;
         Duration::from_millis(delay_ms.min(max_ms))
     }
@@ -439,10 +439,7 @@ impl WorkerPool {
         let deadline = Instant::now() + timeout;
 
         while Instant::now() < deadline {
-            let all_stopped = self
-                .workers
-                .values_mut()
-                .all(|m| !m.worker.is_running());
+            let all_stopped = self.workers.values_mut().all(|m| !m.worker.is_running());
 
             if all_stopped {
                 info!("All workers stopped");
@@ -474,5 +471,127 @@ impl WorkerPool {
     /// Get all worker ports
     pub fn worker_ports(&self) -> Vec<u16> {
         self.workers.values().map(|m| m.worker.port()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_config(restart_delay_ms: u64, max_restart_delay_ms: u64) -> PoolConfig {
+        PoolConfig {
+            worker_count: 1,
+            base_port: 3001,
+            binary_path: PathBuf::from("./test"),
+            health_interval: Duration::from_secs(5),
+            restart_delay: Duration::from_millis(restart_delay_ms),
+            max_restart_delay: Duration::from_millis(max_restart_delay_ms),
+            max_consecutive_failures: 5,
+            auth_secret: None,
+            openai_api_key: None,
+            anthropic_api_key: None,
+            env_vars: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_restart_delay_first_failure() {
+        let config = make_config(1000, 30000);
+        // First failure (failures=1): 1000 * 2^0 = 1000ms
+        let delay = WorkerPool::calculate_restart_delay_static(&config, 1);
+        assert_eq!(delay, Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn test_restart_delay_exponential_backoff() {
+        let config = make_config(1000, 30000);
+
+        // failures=1: 1000 * 2^0 = 1000ms
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 1),
+            Duration::from_millis(1000)
+        );
+
+        // failures=2: 1000 * 2^1 = 2000ms
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 2),
+            Duration::from_millis(2000)
+        );
+
+        // failures=3: 1000 * 2^2 = 4000ms
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 3),
+            Duration::from_millis(4000)
+        );
+
+        // failures=4: 1000 * 2^3 = 8000ms
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 4),
+            Duration::from_millis(8000)
+        );
+
+        // failures=5: 1000 * 2^4 = 16000ms
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 5),
+            Duration::from_millis(16000)
+        );
+    }
+
+    #[test]
+    fn test_restart_delay_capped_at_max() {
+        let config = make_config(1000, 5000);
+
+        // failures=1: 1000ms (under cap)
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 1),
+            Duration::from_millis(1000)
+        );
+
+        // failures=2: 2000ms (under cap)
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 2),
+            Duration::from_millis(2000)
+        );
+
+        // failures=3: would be 4000ms, under cap
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 3),
+            Duration::from_millis(4000)
+        );
+
+        // failures=4: would be 8000ms, capped at 5000ms
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 4),
+            Duration::from_millis(5000)
+        );
+
+        // failures=5: would be 16000ms, capped at 5000ms
+        assert_eq!(
+            WorkerPool::calculate_restart_delay_static(&config, 5),
+            Duration::from_millis(5000)
+        );
+    }
+
+    #[test]
+    fn test_restart_delay_zero_failures() {
+        let config = make_config(1000, 30000);
+        // Edge case: 0 failures uses saturating_sub, so 2^0 = 1
+        let delay = WorkerPool::calculate_restart_delay_static(&config, 0);
+        assert_eq!(delay, Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn test_worker_state_equality() {
+        assert_eq!(WorkerState::Starting, WorkerState::Starting);
+        assert_eq!(WorkerState::Healthy, WorkerState::Healthy);
+        assert_eq!(WorkerState::Draining, WorkerState::Draining);
+        assert_eq!(WorkerState::Stopped, WorkerState::Stopped);
+        assert_ne!(WorkerState::Starting, WorkerState::Healthy);
+
+        // Failed states with different restart times are still matchable
+        let failed1 = WorkerState::Failed {
+            restart_at: Instant::now(),
+        };
+        assert!(matches!(failed1, WorkerState::Failed { .. }));
     }
 }
