@@ -477,6 +477,10 @@ impl WorkerPool {
 
             if all_stopped {
                 info!("All workers stopped");
+                // Reap all child processes
+                for (_worker_id, managed) in &mut self.workers {
+                    let _ = managed.worker.wait().await;
+                }
                 return;
             }
 
@@ -491,6 +495,11 @@ impl WorkerPool {
                     error!(worker_id = %worker_id, error = %e, "Failed to kill worker");
                 }
             }
+        }
+
+        // Reap all child processes
+        for (_worker_id, managed) in &mut self.workers {
+            let _ = managed.worker.wait().await;
         }
     }
 
