@@ -728,6 +728,9 @@ struct SseEvent {
 }
 
 /// Start supervisor and collect SSE events in background
+///
+/// The SSE client polls for API readiness and connects immediately once available.
+/// This ensures we catch early events like supervisor_ready.
 fn start_supervisor_with_sse_collection(
     workers: u32,
     base_port: u16,
@@ -740,38 +743,54 @@ fn start_supervisor_with_sse_collection(
     // Start SSE collection in background thread
     let api_port_clone = api_port;
     std::thread::spawn(move || {
-        // Wait for API to be ready
-        std::thread::sleep(Duration::from_millis(500));
-
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
             .unwrap();
 
-        if let Ok(response) = client
-            .get(format!(
-                "http://127.0.0.1:{}/workers/events",
-                api_port_clone
-            ))
-            .send()
-        {
-            let reader = BufReader::new(response);
-            let mut current_event_type = String::new();
+        // Poll for API readiness with tight loop (no arbitrary sleep)
+        // This ensures we connect as soon as possible to catch supervisor_ready
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_secs(10);
+        loop {
+            if start.elapsed() > timeout {
+                eprintln!("SSE collection: timeout waiting for API");
+                return;
+            }
 
-            for line in reader.lines().map_while(Result::ok) {
-                if line.starts_with("event:") {
-                    current_event_type = line.trim_start_matches("event:").trim().to_string();
-                } else if line.starts_with("data:") {
-                    let data_str = line.trim_start_matches("data:").trim();
-                    if let Ok(data) = serde_json::from_str(data_str) {
-                        let event = SseEvent {
-                            event_type: current_event_type.clone(),
-                            data,
-                        };
-                        if tx.send(event).is_err() {
-                            break;
+            match client
+                .get(format!(
+                    "http://127.0.0.1:{}/workers/events",
+                    api_port_clone
+                ))
+                .send()
+            {
+                Ok(response) => {
+                    let reader = BufReader::new(response);
+                    let mut current_event_type = String::new();
+
+                    for line in reader.lines().map_while(Result::ok) {
+                        if line.starts_with("event:") {
+                            current_event_type =
+                                line.trim_start_matches("event:").trim().to_string();
+                        } else if line.starts_with("data:") {
+                            let data_str = line.trim_start_matches("data:").trim();
+                            if let Ok(data) = serde_json::from_str(data_str) {
+                                let event = SseEvent {
+                                    event_type: current_event_type.clone(),
+                                    data,
+                                };
+                                if tx.send(event).is_err() {
+                                    return;
+                                }
+                            }
                         }
                     }
+                    return;
+                }
+                Err(_) => {
+                    // API not ready yet, retry quickly
+                    std::thread::sleep(Duration::from_millis(10));
                 }
             }
         }
