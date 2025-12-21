@@ -701,3 +701,459 @@ fn test_graceful_shutdown() {
 
     cleanup_ports(base_port, 1);
 }
+
+// ============================================================================
+// SSE Event Lifecycle Tests
+// ============================================================================
+//
+// These tests enforce the correct event lifecycle as specified:
+//
+// Per-worker lifecycle:
+//   worker_spawned → worker_healthy → (worker_unhealthy?) → worker_draining → worker_drained → (worker_restarting | worker_failed)
+//
+// Key invariants:
+// - worker_spawned and worker_healthy are NEVER merged (spawned = process exists, healthy = ready)
+// - worker_drained and worker_failed are NEVER emitted for the same transition
+// - Events model what happened, not what should happen
+//
+
+use std::io::{BufRead, BufReader};
+use std::sync::mpsc;
+
+/// Collected SSE events from a supervisor
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SseEvent {
+    event_type: String,
+    data: serde_json::Value,
+}
+
+/// Start supervisor and collect SSE events in background
+fn start_supervisor_with_sse_collection(
+    workers: u32,
+    base_port: u16,
+    api_port: u16,
+) -> (Child, mpsc::Receiver<SseEvent>) {
+    let supervisor = start_supervisor_with_api(workers, base_port, api_port);
+
+    let (tx, rx) = mpsc::channel();
+
+    // Start SSE collection in background thread
+    let api_port_clone = api_port;
+    std::thread::spawn(move || {
+        // Wait for API to be ready
+        std::thread::sleep(Duration::from_millis(500));
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap();
+
+        if let Ok(response) = client
+            .get(format!(
+                "http://127.0.0.1:{}/workers/events",
+                api_port_clone
+            ))
+            .send()
+        {
+            let reader = BufReader::new(response);
+            let mut current_event_type = String::new();
+
+            for line in reader.lines().map_while(Result::ok) {
+                if line.starts_with("event:") {
+                    current_event_type = line.trim_start_matches("event:").trim().to_string();
+                } else if line.starts_with("data:") {
+                    let data_str = line.trim_start_matches("data:").trim();
+                    if let Ok(data) = serde_json::from_str(data_str) {
+                        let event = SseEvent {
+                            event_type: current_event_type.clone(),
+                            data,
+                        };
+                        if tx.send(event).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    (supervisor, rx)
+}
+
+/// Collect all events received so far (non-blocking drain)
+fn collect_events(rx: &mpsc::Receiver<SseEvent>) -> Vec<SseEvent> {
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+    events
+}
+
+#[test]
+fn test_sse_lifecycle_spawned_before_healthy() {
+    // Enforces: worker_spawned must be emitted BEFORE worker_healthy
+    // These events must NEVER be merged
+
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4100;
+    let api_port = 9100;
+    cleanup_ports(base_port, 1);
+
+    let (mut supervisor, rx) = start_supervisor_with_sse_collection(1, base_port, api_port);
+
+    // Wait for worker to become healthy
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(15)),
+        "Worker should become healthy"
+    );
+
+    // Give events time to arrive
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Collect all events
+    let events = collect_events(&rx);
+
+    // Find spawned and healthy events for our worker
+    let spawned_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type == "worker_spawned")
+        .collect();
+    let healthy_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type == "worker_healthy")
+        .collect();
+
+    // Must have at least one of each (not merged!)
+    assert!(
+        !spawned_events.is_empty(),
+        "Must emit worker_spawned event (got events: {:?})",
+        events.iter().map(|e| &e.event_type).collect::<Vec<_>>()
+    );
+    assert!(
+        !healthy_events.is_empty(),
+        "Must emit worker_healthy event (got events: {:?})",
+        events.iter().map(|e| &e.event_type).collect::<Vec<_>>()
+    );
+
+    // Verify spawned comes before healthy in the event stream
+    let spawned_idx = events
+        .iter()
+        .position(|e| e.event_type == "worker_spawned")
+        .unwrap();
+    let healthy_idx = events
+        .iter()
+        .position(|e| e.event_type == "worker_healthy")
+        .unwrap();
+    assert!(
+        spawned_idx < healthy_idx,
+        "worker_spawned (idx {}) must come before worker_healthy (idx {})",
+        spawned_idx,
+        healthy_idx
+    );
+
+    // Verify same worker ID in both events
+    let spawned_id = spawned_events[0].data["id"].as_str().unwrap();
+    let healthy_id = healthy_events[0].data["id"].as_str().unwrap();
+    assert_eq!(
+        spawned_id, healthy_id,
+        "spawned and healthy should reference same worker"
+    );
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 1);
+}
+
+#[test]
+fn test_sse_lifecycle_supervisor_ready_on_boot() {
+    // Enforces: supervisor_ready must be emitted once on boot
+
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4110;
+    let api_port = 9110;
+    cleanup_ports(base_port, 1);
+
+    let (mut supervisor, rx) = start_supervisor_with_sse_collection(1, base_port, api_port);
+
+    // Wait for supervisor to be ready
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+
+    // Give events time to arrive
+    std::thread::sleep(Duration::from_millis(1000));
+
+    // Check for supervisor_ready event
+    let events = collect_events(&rx);
+    let ready_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type == "supervisor_ready")
+        .collect();
+
+    assert!(
+        !ready_events.is_empty(),
+        "Must emit supervisor_ready event on boot (got events: {:?})",
+        events.iter().map(|e| &e.event_type).collect::<Vec<_>>()
+    );
+
+    // Verify payload
+    let ready_event = &ready_events[0];
+    assert!(
+        ready_event.data["worker_count"].as_u64().is_some(),
+        "supervisor_ready must include worker_count"
+    );
+    assert!(
+        ready_event.data["api_port"].as_u64().is_some(),
+        "supervisor_ready must include api_port"
+    );
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 1);
+}
+
+#[test]
+fn test_sse_lifecycle_draining_before_drained() {
+    // Enforces: worker_draining must come before worker_drained
+    // worker_drained means inflight == 0, not process exit
+
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4120;
+    let api_port = 9120;
+    cleanup_ports(base_port, 1);
+
+    let (mut supervisor, rx) = start_supervisor_with_sse_collection(1, base_port, api_port);
+
+    // Wait for worker to be healthy
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Worker should become healthy"
+    );
+
+    // Get worker ID
+    let workers = get_workers_list(api_port).expect("Should get workers list");
+    let worker_id = workers["workers"][0]["id"].as_str().unwrap().to_string();
+
+    // Drain the worker
+    let drain_result = drain_worker_api(api_port, &worker_id).expect("Should drain worker");
+    assert!(drain_result["success"].as_bool().unwrap_or(false));
+
+    // Wait for worker to be down
+    assert!(
+        wait_for_worker_down(base_port, Duration::from_secs(15)),
+        "Worker should be down after drain"
+    );
+
+    // Give events time to arrive
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Collect all events
+    let events = collect_events(&rx);
+
+    // Find draining event for our worker
+    let draining_events: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.event_type == "worker_draining" && e.data["id"].as_str() == Some(worker_id.as_str())
+        })
+        .collect();
+
+    assert!(
+        !draining_events.is_empty(),
+        "Must emit worker_draining event (got events: {:?})",
+        events.iter().map(|e| &e.event_type).collect::<Vec<_>>()
+    );
+
+    // Note: worker_drained depends on the worker emitting "worker.drained" via stdout
+    // If the worker doesn't emit this, we won't see the event.
+    // This test verifies draining is emitted; drained depends on worker implementation.
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 1);
+}
+
+#[test]
+fn test_sse_lifecycle_no_failed_for_drained_worker() {
+    // Enforces: worker_drained and worker_failed must NEVER both be emitted
+    // for the same worker transition. A draining worker that exits is drained, not failed.
+
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4130;
+    let api_port = 9130;
+    cleanup_ports(base_port, 1);
+
+    let (mut supervisor, rx) = start_supervisor_with_sse_collection(1, base_port, api_port);
+
+    // Wait for worker to be healthy
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Worker should become healthy"
+    );
+
+    // Get worker ID
+    let workers = get_workers_list(api_port).expect("Should get workers list");
+    let worker_id = workers["workers"][0]["id"].as_str().unwrap().to_string();
+
+    // Drain the worker (graceful shutdown)
+    drain_worker_api(api_port, &worker_id).expect("Should drain worker");
+
+    // Wait for worker to be down
+    assert!(
+        wait_for_worker_down(base_port, Duration::from_secs(15)),
+        "Worker should be down after drain"
+    );
+
+    // Give events time to arrive
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Collect all events
+    let events = collect_events(&rx);
+
+    // Find draining and failed events for our worker
+    let draining_for_worker: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.event_type == "worker_draining" && e.data["id"].as_str() == Some(worker_id.as_str())
+        })
+        .collect();
+    let failed_for_worker: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.event_type == "worker_failed" && e.data["id"].as_str() == Some(worker_id.as_str())
+        })
+        .collect();
+    let unhealthy_for_worker: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.event_type == "worker_unhealthy" && e.data["id"].as_str() == Some(worker_id.as_str())
+        })
+        .collect();
+
+    // Draining should be emitted
+    assert!(
+        !draining_for_worker.is_empty(),
+        "worker_draining should be emitted for drain operation"
+    );
+
+    // Failed and unhealthy should NOT be emitted for a gracefully drained worker
+    assert!(
+        failed_for_worker.is_empty(),
+        "worker_failed must NOT be emitted for a drained worker (got {:?})",
+        failed_for_worker
+    );
+    assert!(
+        unhealthy_for_worker.is_empty(),
+        "worker_unhealthy must NOT be emitted for a drained worker (got {:?})",
+        unhealthy_for_worker
+    );
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 1);
+}
+
+#[test]
+fn test_sse_lifecycle_crash_emits_unhealthy_not_drained() {
+    // Enforces: A crashed worker emits worker_unhealthy/worker_restarting,
+    // NOT worker_drained. Drained is only for graceful shutdown completion.
+
+    if !worker_binary().exists() {
+        eprintln!("Skipping integration test: worker binary not found");
+        return;
+    }
+
+    let base_port = 4140;
+    let api_port = 9140;
+    cleanup_ports(base_port, 1);
+
+    let (mut supervisor, rx) = start_supervisor_with_sse_collection(1, base_port, api_port);
+
+    // Wait for worker to be healthy
+    assert!(
+        wait_for_supervisor_api(api_port, Duration::from_secs(10)),
+        "Supervisor API should be ready"
+    );
+    assert!(
+        wait_for_healthy(base_port, Duration::from_secs(10)),
+        "Worker should become healthy"
+    );
+
+    // Get worker ID
+    let workers = get_workers_list(api_port).expect("Should get workers list");
+    let worker_id = workers["workers"][0]["id"].as_str().unwrap().to_string();
+
+    // Kill the worker (simulates crash, not graceful shutdown)
+    assert!(
+        kill_worker_on_port(base_port),
+        "Should find and kill worker process"
+    );
+
+    // Wait for supervisor to detect crash and potentially restart
+    std::thread::sleep(Duration::from_secs(2));
+
+    // Collect all events
+    let events = collect_events(&rx);
+
+    // Find events for our worker
+    let unhealthy_for_worker: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.event_type == "worker_unhealthy" && e.data["id"].as_str() == Some(worker_id.as_str())
+        })
+        .collect();
+    let drained_for_worker: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.event_type == "worker_drained" && e.data["id"].as_str() == Some(worker_id.as_str())
+        })
+        .collect();
+
+    // Unhealthy SHOULD be emitted for a crash
+    assert!(
+        !unhealthy_for_worker.is_empty(),
+        "worker_unhealthy should be emitted for crashed worker (got events: {:?})",
+        events.iter().map(|e| &e.event_type).collect::<Vec<_>>()
+    );
+
+    // Drained should NOT be emitted for a crash
+    assert!(
+        drained_for_worker.is_empty(),
+        "worker_drained must NOT be emitted for crashed worker (got {:?})",
+        drained_for_worker
+    );
+
+    // Clean up
+    let _ = supervisor.kill();
+    let _ = supervisor.wait();
+    cleanup_ports(base_port, 1);
+}

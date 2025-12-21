@@ -106,10 +106,18 @@ const DEFAULT_MAX_PORT: u16 = 49151;
 /// Events emitted by the worker pool
 #[derive(Debug, Clone)]
 pub enum PoolEvent {
+    /// Supervisor is ready (emitted once on boot after API server starts)
+    SupervisorReady { worker_count: usize, api_port: u16 },
+    /// A worker was spawned (process started, not yet healthy)
+    WorkerSpawned { worker_id: String, port: u16 },
     /// A worker became healthy
     WorkerHealthy { worker_id: String, port: u16 },
     /// A worker became unhealthy
     WorkerUnhealthy { worker_id: String, reason: String },
+    /// A worker started draining (graceful shutdown initiated)
+    WorkerDraining { worker_id: String },
+    /// A worker finished draining and exited cleanly
+    WorkerDrained { worker_id: String },
     /// A worker is being restarted
     WorkerRestarting { worker_id: String, attempt: u32 },
     /// A worker failed permanently (too many restarts)
@@ -221,6 +229,15 @@ impl WorkerPool {
             },
         );
 
+        // Emit worker_spawned event (separate from worker_healthy)
+        let _ = self
+            .pool_event_tx
+            .send(PoolEvent::WorkerSpawned {
+                worker_id: worker_id.to_string(),
+                port,
+            })
+            .await;
+
         Ok(())
     }
 
@@ -291,6 +308,27 @@ impl WorkerPool {
                 if let Some(managed) = self.workers.get_mut(&worker_id) {
                     managed.state = WorkerState::Draining;
                 }
+
+                // Emit worker_draining event
+                let _ = self
+                    .pool_event_tx
+                    .send(PoolEvent::WorkerDraining {
+                        worker_id: worker_id.clone(),
+                    })
+                    .await;
+            }
+
+            WorkerEvent::Drained { worker_id } => {
+                info!(worker_id = %worker_id, "Worker drained (inflight == 0)");
+
+                // Emit worker_drained event - worker has completed all inflight tasks
+                // This is emitted BEFORE the process exits, signaling clean drain completion
+                let _ = self
+                    .pool_event_tx
+                    .send(PoolEvent::WorkerDrained {
+                        worker_id: worker_id.clone(),
+                    })
+                    .await;
             }
 
             WorkerEvent::Exited {
@@ -301,12 +339,16 @@ impl WorkerPool {
                 let mut exited_worker: Option<(String, u32)> = None;
 
                 if let Some(managed) = self.workers.get_mut(&worker_id) {
+                    // Track if worker was draining before processing
+                    let was_draining = managed.state == WorkerState::Draining;
+
                     // Skip if already processed (Failed state set by health check)
                     if managed.state != WorkerState::Stopped
                         && !matches!(managed.state, WorkerState::Failed { .. })
                     {
-                        if exit_code == Some(0) {
-                            info!(worker_id = %worker_id, "Worker exited cleanly");
+                        // Clean exit (code 0) or draining worker exited = expected, not failed
+                        if exit_code == Some(0) || was_draining {
+                            info!(worker_id = %worker_id, was_draining = was_draining, "Worker exited cleanly");
                             managed.state = WorkerState::Stopped;
                         } else {
                             warn!(
@@ -330,7 +372,7 @@ impl WorkerPool {
                     }
                 }
 
-                // Send events outside the borrow
+                // Only emit unhealthy/restarting/failed for unexpected exits (not draining)
                 if let Some((worker_id, failures)) = exited_worker {
                     let _ = self
                         .pool_event_tx

@@ -12,8 +12,10 @@ use tracing::{error, info, warn};
 pub enum WorkerEvent {
     /// Worker is ready and accepting connections
     Ready { port: u16, worker_id: String },
-    /// Worker is draining (graceful shutdown)
+    /// Worker is draining (graceful shutdown initiated)
     Draining { worker_id: String },
+    /// Worker has drained (inflight == 0, all tasks completed)
+    Drained { worker_id: String },
     /// Worker process exited
     Exited {
         worker_id: String,
@@ -138,6 +140,20 @@ impl Worker {
                                             }
                                         };
                                     let _ = tx.send(WorkerEvent::Draining { worker_id }).await;
+                                    continue;
+                                }
+                                "worker.drained" => {
+                                    let worker_id =
+                                        match event.get("workerId").and_then(|v| v.as_str()) {
+                                            Some(id) => id.to_string(),
+                                            None => {
+                                                tracing::warn!(
+                                                    "worker.drained event missing 'workerId' field"
+                                                );
+                                                String::new()
+                                            }
+                                        };
+                                    let _ = tx.send(WorkerEvent::Drained { worker_id }).await;
                                     continue;
                                 }
                                 _ => {}

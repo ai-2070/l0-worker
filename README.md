@@ -362,25 +362,16 @@ Returns 404 if the worker is not found.
 
 #### GET /workers/events (SSE)
 
-Real-time event stream for worker lifecycle changes.
+Real-time event stream for supervisor and worker lifecycle changes.
 
 ```bash
 curl -N http://localhost:9000/workers/events
 ```
 
-Events:
+**Global Events:**
 ```
-event: worker_healthy
-data: {"id":"l0-...","port":3001}
-
-event: worker_unhealthy
-data: {"id":"l0-...","reason":"health check failed"}
-
-event: worker_restarting
-data: {"id":"l0-...","attempt":1}
-
-event: worker_failed
-data: {"id":"l0-..."}
+event: supervisor_ready
+data: {"worker_count":4,"api_port":9000}
 
 event: all_workers_healthy
 data: {}
@@ -388,6 +379,45 @@ data: {}
 event: shutting_down
 data: {}
 ```
+
+**Per-Worker Events:**
+```
+event: worker_spawned
+data: {"id":"l0-...","port":3001}
+
+event: worker_healthy
+data: {"id":"l0-...","port":3001}
+
+event: worker_unhealthy
+data: {"id":"l0-...","reason":"health check failed"}
+
+event: worker_draining
+data: {"id":"l0-..."}
+
+event: worker_drained
+data: {"id":"l0-..."}
+
+event: worker_restarting
+data: {"id":"l0-...","attempt":1}
+
+event: worker_failed
+data: {"id":"l0-..."}
+```
+
+**Event Lifecycle:**
+
+Each worker follows this lifecycle:
+```
+worker_spawned → worker_healthy → (worker_unhealthy?) → worker_draining → worker_drained → (worker_restarting | worker_failed)
+```
+
+Key semantics:
+- `worker_spawned`: Process created and registered (not yet healthy)
+- `worker_healthy`: Worker is ready and accepting work
+- `worker_draining`: Graceful shutdown initiated (no new work accepted)
+- `worker_drained`: All inflight tasks completed (emitted before process exit)
+- `worker_spawned` and `worker_healthy` are never merged
+- `worker_drained` and `worker_failed` are never emitted for the same transition
 
 #### POST /workers/spawn
 

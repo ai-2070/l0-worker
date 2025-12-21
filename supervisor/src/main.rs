@@ -154,11 +154,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(event) = pool_rx.recv().await {
             // Log the event
             match &event {
+                PoolEvent::SupervisorReady {
+                    worker_count,
+                    api_port,
+                } => {
+                    info!(
+                        worker_count = worker_count,
+                        api_port = api_port,
+                        "Supervisor ready"
+                    );
+                }
+                PoolEvent::WorkerSpawned { worker_id, port } => {
+                    info!(worker_id = %worker_id, port = port, "Worker spawned");
+                }
                 PoolEvent::WorkerHealthy { worker_id, port } => {
                     info!(worker_id = %worker_id, port = port, "Worker healthy");
                 }
                 PoolEvent::WorkerUnhealthy { worker_id, reason } => {
                     warn!(worker_id = %worker_id, reason = %reason, "Worker unhealthy");
+                }
+                PoolEvent::WorkerDraining { worker_id } => {
+                    info!(worker_id = %worker_id, "Worker draining");
+                }
+                PoolEvent::WorkerDrained { worker_id } => {
+                    info!(worker_id = %worker_id, "Worker drained");
                 }
                 PoolEvent::WorkerRestarting { worker_id, attempt } => {
                     info!(worker_id = %worker_id, attempt = attempt, "Worker restarting");
@@ -182,13 +201,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start API server
     let api_state = AppState {
         pool: Arc::clone(&pool),
-        event_tx: sse_tx,
+        event_tx: sse_tx.clone(),
     };
     let api_port = args.api_port;
+    let worker_count = args.workers;
     let api_server = tokio::spawn(async move {
         if let Err(e) = api::start_server(api_state, api_port).await {
             error!(error = %e, "API server error");
         }
+    });
+
+    // Emit supervisor_ready event after API server is started
+    let _ = sse_tx.send(PoolEvent::SupervisorReady {
+        worker_count,
+        api_port,
     });
 
     // Handle shutdown signals
