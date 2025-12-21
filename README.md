@@ -406,15 +406,22 @@ data: {"id":"l0-..."}
 
 **Event Lifecycle:**
 
-Workers follow one of two paths:
+Workers follow one of two mutually exclusive paths:
 
-```
-Graceful shutdown:
-  worker_spawned → worker_healthy → worker_draining → worker_drained
-
-Crash/failure:
-  worker_spawned → worker_healthy → worker_unhealthy → worker_restarting
-                                                     ↘ worker_failed (if max restarts exceeded)
+```mermaid
+stateDiagram-v2
+    [*] --> spawned: process created
+    spawned --> healthy: worker.ready
+    
+    healthy --> draining: drain requested
+    draining --> drained: inflight == 0
+    drained --> [*]: exit
+    
+    healthy --> unhealthy: crash / health check failed
+    unhealthy --> restarting: retry
+    unhealthy --> failed: max retries
+    restarting --> spawned: new process
+    failed --> [*]: removed
 ```
 
 Key semantics:
