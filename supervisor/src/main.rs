@@ -198,24 +198,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Start API server
+    // Start API server with ready signal
     let api_state = AppState {
         pool: Arc::clone(&pool),
         event_tx: sse_tx.clone(),
     };
     let api_port = args.api_port;
     let worker_count = args.workers;
+    let (api_ready_tx, api_ready_rx) = tokio::sync::oneshot::channel();
     let api_server = tokio::spawn(async move {
-        if let Err(e) = api::start_server(api_state, api_port).await {
+        if let Err(e) = api::start_server(api_state, api_port, Some(api_ready_tx)).await {
             error!(error = %e, "API server error");
         }
     });
 
-    // Emit supervisor_ready event after API server is started
-    let _ = sse_tx.send(PoolEvent::SupervisorReady {
-        worker_count,
-        api_port,
-    });
+    // Wait for API server to be ready before emitting supervisor_ready event
+    // This ensures SSE clients can connect and receive the event
+    if api_ready_rx.await.is_ok() {
+        let _ = sse_tx.send(PoolEvent::SupervisorReady {
+            worker_count,
+            api_port,
+        });
+    }
 
     // Handle shutdown signals
     let shutdown_timeout = Duration::from_millis(args.shutdown_timeout);

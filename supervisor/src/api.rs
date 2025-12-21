@@ -277,13 +277,26 @@ pub fn create_router(state: AppState) -> Router {
 }
 
 /// Start the API server
-pub async fn start_server(state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// If `ready_tx` is provided, sends `()` once the server is bound and listening.
+/// This allows callers to wait for the server to be ready before emitting events.
+pub async fn start_server(
+    state: AppState,
+    port: u16,
+    ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = create_router(state);
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
     tracing::info!(port = port, "Starting supervisor API server");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    // Signal that the server is ready (bound and listening)
+    if let Some(tx) = ready_tx {
+        let _ = tx.send(());
+    }
+
     axum::serve(listener, app).await?;
 
     Ok(())

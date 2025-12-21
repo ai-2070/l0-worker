@@ -406,9 +406,15 @@ data: {"id":"l0-..."}
 
 **Event Lifecycle:**
 
-Each worker follows this lifecycle:
+Workers follow one of two paths:
+
 ```
-worker_spawned → worker_healthy → (worker_unhealthy?) → worker_draining → worker_drained → (worker_restarting | worker_failed)
+Graceful shutdown:
+  worker_spawned → worker_healthy → worker_draining → worker_drained
+
+Crash/failure:
+  worker_spawned → worker_healthy → worker_unhealthy → worker_restarting
+                                                     ↘ worker_failed (if max restarts exceeded)
 ```
 
 Key semantics:
@@ -417,7 +423,7 @@ Key semantics:
 - `worker_draining`: Graceful shutdown initiated (no new work accepted)
 - `worker_drained`: All inflight tasks completed (emitted before process exit)
 - `worker_spawned` and `worker_healthy` are never merged
-- `worker_drained` and `worker_failed` are never emitted for the same transition
+- `worker_drained` and `worker_failed` are mutually exclusive (different paths)
 
 #### POST /workers/spawn
 
