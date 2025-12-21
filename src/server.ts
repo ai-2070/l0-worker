@@ -330,17 +330,23 @@ async function waitForDrained(): Promise<void> {
   while (worker.inflightCount > 0) {
     if (Date.now() - startTime > maxWait) {
       // Timeout waiting for drain, exit anyway
-      break;
+      console.log(
+        JSON.stringify({
+          event: "worker.drained",
+          workerId: worker.workerId,
+          timedOut: true,
+          pendingTasks: worker.inflightCount,
+        }),
+      );
+      return;
     }
     await new Promise((resolve) => setTimeout(resolve, pollInterval));
   }
 
-  // Emit worker.drained when inflight == 0
-  if (worker.inflightCount === 0) {
-    console.log(
-      JSON.stringify({ event: "worker.drained", workerId: worker.workerId }),
-    );
-  }
+  // Clean drain - all tasks completed
+  console.log(
+    JSON.stringify({ event: "worker.drained", workerId: worker.workerId }),
+  );
 }
 
 /**

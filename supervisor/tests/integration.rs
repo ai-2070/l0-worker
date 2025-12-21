@@ -799,7 +799,9 @@ fn start_supervisor_with_sse_collection(
                         } else if let Some(value) = line.strip_prefix("event:") {
                             current_event_type = value.trim().to_string();
                         } else if let Some(value) = line.strip_prefix("data:") {
-                            // Multiple data lines are concatenated with newlines
+                            // Per SSE spec, multiple data: lines are concatenated with newlines.
+                            // Our server emits single-line JSON, so this handles the spec correctly
+                            // while working with our compact JSON payloads.
                             if !current_data.is_empty() {
                                 current_data.push('\n');
                             }
