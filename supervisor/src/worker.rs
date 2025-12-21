@@ -12,8 +12,10 @@ use tracing::{error, info, warn};
 pub enum WorkerEvent {
     /// Worker is ready and accepting connections
     Ready { port: u16, worker_id: String },
-    /// Worker is draining (graceful shutdown)
+    /// Worker is draining (graceful shutdown initiated)
     Draining { worker_id: String },
+    /// Worker has drained (inflight == 0, all tasks completed)
+    Drained { worker_id: String },
     /// Worker process exited
     Exited {
         worker_id: String,
@@ -104,40 +106,65 @@ impl Worker {
                         if let Some(event_type) = event.get("event").and_then(|v| v.as_str()) {
                             match event_type {
                                 "worker.ready" => {
-                                    let port = match event.get("port").and_then(|v| v.as_u64()) {
-                                        Some(p) => p as u16,
-                                        None => {
-                                            tracing::warn!(
-                                                "worker.ready event missing 'port' field"
-                                            );
-                                            0
-                                        }
+                                    let Some(port) = event
+                                        .get("port")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|p| p as u16)
+                                    else {
+                                        tracing::error!(
+                                            "worker.ready event missing 'port' field, skipping"
+                                        );
+                                        continue;
                                     };
-                                    let worker_id =
-                                        match event.get("workerId").and_then(|v| v.as_str()) {
-                                            Some(id) => id.to_string(),
-                                            None => {
-                                                tracing::warn!(
-                                                    "worker.ready event missing 'workerId' field"
-                                                );
-                                                String::new()
-                                            }
-                                        };
-                                    let _ = tx.send(WorkerEvent::Ready { port, worker_id }).await;
+                                    let worker_id = event
+                                        .get("workerId")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_else(|| {
+                                            tracing::warn!(
+                                                "worker.ready event missing 'workerId' field, using 'unknown'"
+                                            );
+                                            "unknown"
+                                        });
+                                    let _ = tx
+                                        .send(WorkerEvent::Ready {
+                                            port,
+                                            worker_id: worker_id.to_string(),
+                                        })
+                                        .await;
                                     continue;
                                 }
                                 "worker.draining" => {
-                                    let worker_id =
-                                        match event.get("workerId").and_then(|v| v.as_str()) {
-                                            Some(id) => id.to_string(),
-                                            None => {
-                                                tracing::warn!(
-                                                "worker.draining event missing 'workerId' field"
+                                    let worker_id = event
+                                        .get("workerId")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_else(|| {
+                                            tracing::warn!(
+                                                "worker.draining event missing 'workerId' field, using 'unknown'"
                                             );
-                                                String::new()
-                                            }
-                                        };
-                                    let _ = tx.send(WorkerEvent::Draining { worker_id }).await;
+                                            "unknown"
+                                        });
+                                    let _ = tx
+                                        .send(WorkerEvent::Draining {
+                                            worker_id: worker_id.to_string(),
+                                        })
+                                        .await;
+                                    continue;
+                                }
+                                "worker.drained" => {
+                                    let worker_id = event
+                                        .get("workerId")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_else(|| {
+                                            tracing::warn!(
+                                                "worker.drained event missing 'workerId' field, using 'unknown'"
+                                            );
+                                            "unknown"
+                                        });
+                                    let _ = tx
+                                        .send(WorkerEvent::Drained {
+                                            worker_id: worker_id.to_string(),
+                                        })
+                                        .await;
                                     continue;
                                 }
                                 _ => {}

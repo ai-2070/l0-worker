@@ -174,8 +174,12 @@ async fn restart_worker(
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum EventData {
+    SupervisorReady { worker_count: usize, api_port: u16 },
+    WorkerSpawned { id: String, port: u16 },
     WorkerHealthy { id: String, port: u16 },
     WorkerUnhealthy { id: String, reason: String },
+    WorkerDraining { id: String },
+    WorkerDrained { id: String },
     WorkerRestarting { id: String, attempt: u32 },
     WorkerFailed { id: String },
     AllWorkersHealthy {},
@@ -190,6 +194,23 @@ async fn get_worker_events(
     let stream = BroadcastStream::new(rx).filter_map(|result| match result {
         Ok(event) => {
             let (event_type, data) = match event {
+                PoolEvent::SupervisorReady {
+                    worker_count,
+                    api_port,
+                } => (
+                    "supervisor_ready",
+                    EventData::SupervisorReady {
+                        worker_count,
+                        api_port,
+                    },
+                ),
+                PoolEvent::WorkerSpawned { worker_id, port } => (
+                    "worker_spawned",
+                    EventData::WorkerSpawned {
+                        id: worker_id,
+                        port,
+                    },
+                ),
                 PoolEvent::WorkerHealthy { worker_id, port } => (
                     "worker_healthy",
                     EventData::WorkerHealthy {
@@ -204,6 +225,13 @@ async fn get_worker_events(
                         reason,
                     },
                 ),
+                PoolEvent::WorkerDraining { worker_id } => (
+                    "worker_draining",
+                    EventData::WorkerDraining { id: worker_id },
+                ),
+                PoolEvent::WorkerDrained { worker_id } => {
+                    ("worker_drained", EventData::WorkerDrained { id: worker_id })
+                }
                 PoolEvent::WorkerRestarting { worker_id, attempt } => (
                     "worker_restarting",
                     EventData::WorkerRestarting {
@@ -249,13 +277,26 @@ pub fn create_router(state: AppState) -> Router {
 }
 
 /// Start the API server
-pub async fn start_server(state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// If `ready_tx` is provided, sends `()` once the server is bound and listening.
+/// This allows callers to wait for the server to be ready before emitting events.
+pub async fn start_server(
+    state: AppState,
+    port: u16,
+    ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let app = create_router(state);
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
     tracing::info!(port = port, "Starting supervisor API server");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    // Signal that the server is ready (bound and listening)
+    if let Some(tx) = ready_tx {
+        let _ = tx.send(());
+    }
+
     axum::serve(listener, app).await?;
 
     Ok(())
