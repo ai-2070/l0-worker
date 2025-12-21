@@ -214,12 +214,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wait for API server to be ready before emitting supervisor_ready event
     // This ensures SSE clients can connect and receive the event
-    if api_ready_rx.await.is_ok() {
-        let _ = sse_tx.send(PoolEvent::SupervisorReady {
-            worker_count,
-            api_port,
-        });
+    if api_ready_rx.await.is_err() {
+        error!("API server failed to start");
+        std::process::exit(1);
     }
+    let _ = sse_tx.send(PoolEvent::SupervisorReady {
+        worker_count,
+        api_port,
+    });
 
     // Handle shutdown signals
     let shutdown_timeout = Duration::from_millis(args.shutdown_timeout);

@@ -706,14 +706,17 @@ fn test_graceful_shutdown() {
 // SSE Event Lifecycle Tests
 // ============================================================================
 //
-// These tests enforce the correct event lifecycle as specified:
+// These tests enforce the correct event lifecycle. Workers follow one of two paths:
 //
-// Per-worker lifecycle:
-//   worker_spawned → worker_healthy → (worker_unhealthy?) → worker_draining → worker_drained → (worker_restarting | worker_failed)
+// Graceful shutdown:
+//   worker_spawned → worker_healthy → worker_draining → worker_drained
+//
+// Crash/failure:
+//   worker_spawned → worker_healthy → worker_unhealthy → worker_restarting (or worker_failed)
 //
 // Key invariants:
 // - worker_spawned and worker_healthy are NEVER merged (spawned = process exists, healthy = ready)
-// - worker_drained and worker_failed are NEVER emitted for the same transition
+// - worker_drained and worker_failed are mutually exclusive (different paths)
 // - Events model what happened, not what should happen
 //
 
@@ -765,31 +768,49 @@ fn start_supervisor_with_sse_collection(
                 ))
                 .send()
             {
-                Ok(response) => {
+                Ok(response) if response.status().is_success() => {
                     let reader = BufReader::new(response);
+                    // SSE parsing per spec: accumulate event type and data,
+                    // dispatch on empty line (event boundary)
                     let mut current_event_type = String::new();
+                    let mut current_data = String::new();
 
                     for line in reader.lines().map_while(Result::ok) {
-                        if line.starts_with("event:") {
-                            current_event_type =
-                                line.trim_start_matches("event:").trim().to_string();
-                        } else if line.starts_with("data:") {
-                            let data_str = line.trim_start_matches("data:").trim();
-                            if let Ok(data) = serde_json::from_str(data_str) {
-                                let event = SseEvent {
-                                    event_type: current_event_type.clone(),
-                                    data,
-                                };
-                                if tx.send(event).is_err() {
-                                    return;
+                        if line.is_empty() {
+                            // Empty line = event boundary, dispatch if we have data
+                            if !current_data.is_empty() {
+                                if let Ok(data) = serde_json::from_str(&current_data) {
+                                    let event = SseEvent {
+                                        event_type: if current_event_type.is_empty() {
+                                            "message".to_string() // SSE default
+                                        } else {
+                                            current_event_type.clone()
+                                        },
+                                        data,
+                                    };
+                                    if tx.send(event).is_err() {
+                                        return;
+                                    }
                                 }
                             }
+                            // Reset for next event
+                            current_event_type.clear();
+                            current_data.clear();
+                        } else if let Some(value) = line.strip_prefix("event:") {
+                            current_event_type = value.trim().to_string();
+                        } else if let Some(value) = line.strip_prefix("data:") {
+                            // Multiple data lines are concatenated with newlines
+                            if !current_data.is_empty() {
+                                current_data.push('\n');
+                            }
+                            current_data.push_str(value.trim_start());
                         }
+                        // Ignore other fields (id:, retry:, comments starting with :)
                     }
                     return;
                 }
-                Err(_) => {
-                    // API not ready yet, retry quickly
+                Ok(_) | Err(_) => {
+                    // API not ready yet or returned error status, retry quickly
                     std::thread::sleep(Duration::from_millis(10));
                 }
             }
@@ -943,9 +964,9 @@ fn test_sse_lifecycle_supervisor_ready_on_boot() {
 }
 
 #[test]
-fn test_sse_lifecycle_draining_before_drained() {
-    // Enforces: worker_draining must come before worker_drained
-    // worker_drained means inflight == 0, not process exit
+fn test_sse_lifecycle_draining_then_drained() {
+    // Enforces: worker_draining is emitted when graceful shutdown is initiated,
+    // followed by worker_drained when inflight == 0 (before process exit)
 
     if !worker_binary().exists() {
         eprintln!("Skipping integration test: worker binary not found");
@@ -988,11 +1009,18 @@ fn test_sse_lifecycle_draining_before_drained() {
     // Collect all events
     let events = collect_events(&rx);
 
-    // Find draining event for our worker
+    // Find draining and drained events for our worker
     let draining_events: Vec<_> = events
         .iter()
         .filter(|e| {
             e.event_type == "worker_draining" && e.data["id"].as_str() == Some(worker_id.as_str())
+        })
+        .collect();
+
+    let drained_events: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.event_type == "worker_drained" && e.data["id"].as_str() == Some(worker_id.as_str())
         })
         .collect();
 
@@ -1002,9 +1030,31 @@ fn test_sse_lifecycle_draining_before_drained() {
         events.iter().map(|e| &e.event_type).collect::<Vec<_>>()
     );
 
-    // Note: worker_drained depends on the worker emitting "worker.drained" via stdout
-    // If the worker doesn't emit this, we won't see the event.
-    // This test verifies draining is emitted; drained depends on worker implementation.
+    assert!(
+        !drained_events.is_empty(),
+        "Must emit worker_drained event (got events: {:?})",
+        events.iter().map(|e| &e.event_type).collect::<Vec<_>>()
+    );
+
+    // Verify draining comes before drained
+    let draining_idx = events
+        .iter()
+        .position(|e| {
+            e.event_type == "worker_draining" && e.data["id"].as_str() == Some(worker_id.as_str())
+        })
+        .unwrap();
+    let drained_idx = events
+        .iter()
+        .position(|e| {
+            e.event_type == "worker_drained" && e.data["id"].as_str() == Some(worker_id.as_str())
+        })
+        .unwrap();
+    assert!(
+        draining_idx < drained_idx,
+        "worker_draining (idx {}) must come before worker_drained (idx {})",
+        draining_idx,
+        drained_idx
+    );
 
     // Clean up
     let _ = supervisor.kill();
