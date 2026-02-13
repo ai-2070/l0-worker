@@ -20,7 +20,7 @@ clap = { version = "4", features = ["derive"] }
 num_cpus = "1.16"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["signal"] }
+nix = { version = "0.31", features = ["signal"] }
 
 [profile.release]
 strip = true
