@@ -9,6 +9,7 @@ Complete API documentation for the L0 Worker.
   - [POST /api/replay](#post-apireplay)
   - [GET /api/status](#get-apistatus)
   - [POST /api/config](#post-apiconfig)
+  - [POST /api/drain](#post-apidrain)
 - [Request Types](#request-types)
   - [AuthEnvelope](#authenvelope)
   - [InferenceOrder](#inferenceorder) (incl. [TimeoutSpec](#timeoutspec), [GuardrailSpec](#guardrailspec), [ToolSpec](#toolspec), [ParallelSpec](#parallelspec))
@@ -142,6 +143,49 @@ Hot-reload worker configuration.
 
 ---
 
+### POST /api/drain
+
+Trigger graceful shutdown. Aborts in-flight L0 streams via `AbortSignal`.
+
+- **Localhost**: No auth required
+- **Non-localhost**: Requires valid auth token
+
+**Request Body (remote only):**
+
+```json
+{
+  "worker_id": "...",
+  "auth": {
+    "token": "...",
+    "issued_at": 1702900000000,
+    "ttl": 30000
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Drain initiated",
+  "workerId": "...",
+  "drainBufferMs": 5000
+}
+```
+
+The worker emits `WORKER_DRAINING`, aborts in-flight streams, and exits after `drainBufferMs` milliseconds.
+
+**Error Responses:**
+
+| Status | Reason |
+|--------|--------|
+| 401 | Auth validation failed (remote only) |
+| 405 | Method not allowed |
+| 503 | Worker not initialized |
+
+---
+
 ## Request Types
 
 ### AuthEnvelope
@@ -225,7 +269,7 @@ interface ExecutionSpec {
 
 ```typescript
 interface ModelSpec {
-  provider: string;                    // "openai" | "anthropic" | custom
+  provider: string;                    // Currently "openai" only
   model: string;                       // Model identifier
   params?: Record<string, unknown>;    // Provider-specific parameters
 }
@@ -417,7 +461,7 @@ interface TaskSubmit {
       content: string;
     }>;
   };
-  constraints?: {
+  constraints?: {                    // Reserved — parsed but not enforced
     timeout_ms?: number;
     memory_cap_mb?: number;
     determinism_required?: boolean;
