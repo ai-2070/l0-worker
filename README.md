@@ -14,11 +14,11 @@ L0 Worker is a serverless-first execution layer that:
 
 ## 🛠️ Stack
 
-- **Runtime:** Node.js + TypeScript
+- **Runtime:** Bun / Node.js + TypeScript
 - **Inference:** `@ai2070/l0` (streaming runtime, retry, fallbacks, guardrails)
-- **Providers:** `ai` + `@ai-sdk/openai`
+- **Providers:** `ai` + `@ai-sdk/openai` (OpenAI only)
 - **Validation:** Zod
-- **Deployment:** Vercel Serverless Functions
+- **Deployment:** Bun standalone server or Vercel Serverless Functions
 
 ## 📦 Installation
 
@@ -29,7 +29,7 @@ npm install
 ## 💻 Development
 
 ```bash
-# Local development with tsx
+# Standalone Bun server (default port 3000)
 npm run dev
 
 # Vercel local development
@@ -46,7 +46,7 @@ npm run build
 
 ### POST /api/submit
 
-Submit a task for execution. Returns streaming SSE response with events.
+Submit a task for execution. Returns streaming SSE response with events. Duplicate `task_id` submissions are rejected while the original is in-flight.
 
 ```bash
 curl -X POST http://localhost:3000/api/submit \
@@ -73,7 +73,7 @@ curl -X POST http://localhost:3000/api/submit \
 
 ### POST /api/replay
 
-Replay recorded events for a task. Does NOT re-execute - only re-emits previously recorded events.
+Replay recorded events for a task. Does NOT re-execute - only re-emits previously recorded events. Optionally validates output hash for integrity checking.
 
 ```bash
 curl -X POST http://localhost:3000/api/replay \
@@ -83,10 +83,13 @@ curl -X POST http://localhost:3000/api/replay \
     "auth": { "token": "...", "issued_at": ..., "ttl": 30000 },
     "task_id": "task-123",
     "input_hash": "sha256:...",
+    "expected_output_hash": "sha256:...",
     "reason": "verification",
     "replay_ts": 1702900000000
   }'
 ```
+
+Response includes `events_replayed` count and `output_hash_match` (boolean or null if no expected hash provided).
 
 ### GET /api/status
 
@@ -98,7 +101,7 @@ curl http://localhost:3000/api/status
 
 ### POST /api/config
 
-Update worker configuration (hot reload).
+Update worker configuration (hot reload). No auth required from localhost.
 
 ```bash
 curl -X POST http://localhost:3000/api/config \
@@ -182,7 +185,6 @@ Every task submission requires an `order` that defines execution and output cont
 | Kind | Description |
 |------|-------------|
 | `text` | Raw text stream |
-| `tokens` | Token-by-token stream |
 | `json` | Structured JSON with schema validation |
 
 ## 🔐 Authentication
@@ -212,6 +214,7 @@ const token = createHmac("sha256", L0_AUTH_SECRET)
 - ✅ Token validated once per request via HMAC signature
 - 🚫 Never stored, never reused
 - ⏱️ Freshness check: `now - issued_at < ttl`
+- 🕐 5-second clock skew tolerance
 - 🔓 If `L0_AUTH_SECRET` is not set, signature verification is skipped (dev mode)
 
 ## 📤 Events
@@ -221,13 +224,13 @@ const token = createHmac("sha256", L0_AUTH_SECRET)
 | Event | Description |
 |-------|-------------|
 | `WORKER_READY` | Worker initialized and accepting tasks |
-| `WORKER_LOAD` | Current resource pressure |
 | `TASK_ACCEPTED` | Task accepted for execution |
-| `TASK_PROGRESS` | Milestone reached (first_token, streaming, etc.) |
-| `TASK_COMPLETED` | Execution succeeded |
-| `TASK_FAILED` | Execution failed |
+| `TASK_PROGRESS` | Milestone reached (`first_token`) |
+| `TASK_COMPLETED` | Execution succeeded with `finalMetrics` and `outputHash` |
+| `TASK_FAILED` | Execution failed with `failureClass` and `retryable` flag |
 | `WORKER_DRAINING` | Graceful shutdown in progress |
-| `WORKER_OFFLINE` | Worker shutting down |
+
+Failure classes: `timeout`, `rate_limited`, `context_length_exceeded`, `invalid_input`, `model_error`, `network_error`, `guardrail_violation`, `aborted`, `unknown`
 
 ### L0 Lifecycle Events
 
@@ -245,15 +248,18 @@ L0 runtime events are passed through directly to L1:
 L0 enforces backpressure by silence:
 
 1. `TASK_SUBMIT` arrives
-2. Check slot availability
+2. Check slot availability and duplicate task ID
 3. If available → emit `TASK_ACCEPTED`
 4. If no slot → **silence** (L1 infers rejection)
+5. If duplicate task ID → **silence**
 
 No queue. No buffering. No rejection event.
 
 ## 🔁 Replay
 
 Replay re-emits recorded facts. It does NOT re-execute.
+
+Events are stored in an in-memory event store (lost on restart). The store supports optional FIFO eviction via `maxTasks` to bound memory usage.
 
 Replay must **NEVER**:
 - ❌ Regenerate tokens differently
@@ -285,6 +291,7 @@ All variables override preset defaults:
 | Variable | Description |
 |----------|-------------|
 | `WORKER_ID` | Worker identifier (default: uuidv7) |
+| `PORT` | Standalone server port (default: 3000) |
 | `MAX_CONCURRENCY` | Max concurrent tasks |
 | `FUNCTION_TIMEOUT_MS` | Serverless timeout in ms (0 = disabled) |
 | `DRAIN_BUFFER_MS` | Buffer before timeout to emit WORKER_DRAINING |
@@ -505,6 +512,8 @@ Response:
 | `--max-failures` | Max consecutive failures before stopping | 5 |
 | `--max-unhealthy-checks` | Max consecutive unhealthy checks before killing | 2 |
 | `--shutdown-timeout` | Graceful shutdown timeout (ms) | 30000 |
+| `--worker-binary` | Path to l0-worker binary | `./l0-worker` |
+| `--log-level` | Log level (trace/debug/info/warn/error) | info |
 
 ### Building the Supervisor
 
@@ -528,21 +537,22 @@ l0-worker/
 │   ├── index.ts            # Main exports
 │   ├── server.ts           # Standalone Bun server
 │   ├── worker-instance.ts  # Worker class
-│   ├── config.ts           # Configuration defaults
-│   ├── events/             # Event schemas
-│   ├── executor/           # Task execution with L0
+│   ├── config.ts           # Configuration & deployment presets
+│   ├── events/             # Inbound/outbound event schemas
+│   ├── executor/           # Task execution, providers, slot management
 │   ├── inference/          # Inference order types
-│   ├── state/              # Worker state machine
-│   ├── store/              # Event recording
-│   ├── replay/             # Event replay
-│   ├── auth/               # Auth validation
+│   ├── state/              # Worker state machine & runtime config
+│   ├── store/              # In-memory event recording
+│   ├── replay/             # Deterministic event replay
+│   ├── auth/               # HMAC auth validation
 │   └── utils/              # Utilities
 ├── supervisor/             # Rust process supervisor
 │   ├── src/
 │   │   ├── main.rs         # CLI entry point
 │   │   ├── pool.rs         # Worker pool management
 │   │   ├── worker.rs       # Worker process handling
-│   │   └── health.rs       # Health checking
+│   │   ├── health.rs       # Health checking
+│   │   └── api.rs          # Supervisor REST API & SSE
 │   └── Cargo.toml
 └── package.json
 ```
