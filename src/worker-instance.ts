@@ -130,6 +130,7 @@ export class VercelWorker {
 
     // Set up drain timer before function timeout (only if timeout configured)
     let drainTimer: ReturnType<typeof setTimeout> | null = null;
+    const abortController = new AbortController();
 
     try {
       // Transition to ACCEPTING if needed
@@ -152,6 +153,8 @@ export class VercelWorker {
               };
               emit(drainingEvent);
             }
+            // Abort in-flight L0 streams so they don't outlive the function
+            abortController.abort();
           }, drainTimeoutMs);
         }
       }
@@ -185,9 +188,21 @@ export class VercelWorker {
             // Pass L0 events directly to L1 without wrapping
             emit(l0Event);
           },
+          onToolCall: (name, args) => {
+            const progressEvent: TaskProgressEvent = {
+              type: "TASK_PROGRESS",
+              taskId,
+              stage: ProgressStage.TOOL_INVOKED,
+              ts: clock.now(),
+              metadata: { toolName: name, toolArgs: args },
+            };
+            emit(progressEvent);
+            this.eventStore.record(taskId, progressEvent);
+          },
         },
         meta: taskSubmit.meta,
         workerId,
+        signal: abortController.signal,
       });
 
       const duration = Date.now() - startTime;

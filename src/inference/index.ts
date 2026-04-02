@@ -16,6 +16,11 @@ export {
   type FallbackSpec,
   ToolSpecSchema,
   type ToolSpec,
+  TimeoutSpecSchema,
+  type TimeoutSpec,
+  GuardrailSpecSchema,
+  type GuardrailSpec,
+  GuardrailPreset,
 
   // Output
   OutputSpecSchema,

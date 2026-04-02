@@ -59,6 +59,49 @@ export const FallbackSpecSchema = z.object({
 export type FallbackSpec = z.infer<typeof FallbackSpecSchema>;
 
 // -----------------------------------------------------------------------------
+// Timeout Spec
+// -----------------------------------------------------------------------------
+
+export const TimeoutSpecSchema = z.object({
+  initialTokenMs: z.number().positive().optional(),
+  interTokenMs: z.number().positive().optional(),
+});
+
+export type TimeoutSpec = z.infer<typeof TimeoutSpecSchema>;
+
+// -----------------------------------------------------------------------------
+// Guardrail Spec
+// -----------------------------------------------------------------------------
+
+export const GuardrailPreset = {
+  MINIMAL: "minimal",
+  RECOMMENDED: "recommended",
+  STRICT: "strict",
+  JSON_ONLY: "json-only",
+  MARKDOWN_ONLY: "markdown-only",
+  LATEX_ONLY: "latex-only",
+} as const;
+
+export type GuardrailPreset =
+  (typeof GuardrailPreset)[keyof typeof GuardrailPreset];
+
+export const GuardrailSpecSchema = z.object({
+  preset: z
+    .enum([
+      GuardrailPreset.MINIMAL,
+      GuardrailPreset.RECOMMENDED,
+      GuardrailPreset.STRICT,
+      GuardrailPreset.JSON_ONLY,
+      GuardrailPreset.MARKDOWN_ONLY,
+      GuardrailPreset.LATEX_ONLY,
+    ])
+    .optional(),
+  checkIntervalMs: z.number().positive().optional(),
+});
+
+export type GuardrailSpec = z.infer<typeof GuardrailSpecSchema>;
+
+// -----------------------------------------------------------------------------
 // Tool Spec
 // -----------------------------------------------------------------------------
 
@@ -66,6 +109,7 @@ export const JsonSchemaSchema = z.record(z.string(), z.unknown());
 
 export const ToolSpecSchema = z.object({
   name: z.string(),
+  description: z.string().optional(),
   schema: JsonSchemaSchema,
 });
 
@@ -81,6 +125,9 @@ export const ExecutionSpecSchema = z.object({
   retry: RetrySpecSchema.optional(),
   fallbacks: z.array(FallbackSpecSchema).optional(),
   tools: z.array(ToolSpecSchema).optional(),
+  timeout: TimeoutSpecSchema.optional(),
+  guardrails: GuardrailSpecSchema.optional(),
+  continueFromLastKnownGoodToken: z.boolean().optional(),
 });
 
 export type ExecutionSpec = z.infer<typeof ExecutionSpecSchema>;
