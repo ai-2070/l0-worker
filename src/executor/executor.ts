@@ -1,6 +1,6 @@
 import { l0 } from "@ai2070/l0";
 import { streamText, streamObject } from "ai";
-import type { CoreMessage } from "ai";
+import type { ModelMessage } from "ai";
 import { jsonSchema } from "ai";
 import type {
   InferenceOrder,
@@ -87,7 +87,7 @@ export async function executeOrder(
 async function executeText(
   primaryModel: ModelSpec,
   execution: InferenceOrder["execution"],
-  messages: CoreMessage[],
+  messages: ModelMessage[],
   callbacks?: ExecutionCallbacks,
   meta?: Record<string, unknown>,
 ): Promise<ExecutionResult> {
@@ -167,7 +167,7 @@ async function executeText(
 async function executeStructured(
   primaryModel: ModelSpec,
   execution: InferenceOrder["execution"],
-  messages: CoreMessage[],
+  messages: ModelMessage[],
   outputSpec: JsonOutput,
   callbacks?: ExecutionCallbacks,
   meta?: Record<string, unknown>,
@@ -303,7 +303,7 @@ function mapRetrySpec(spec: RetrySpec | undefined):
 /**
  * Build messages from payload.
  */
-function buildMessages(payload: TaskPayload): CoreMessage[] {
+function buildMessages(payload: TaskPayload): ModelMessage[] {
   if (payload.messages) {
     return payload.messages;
   }
