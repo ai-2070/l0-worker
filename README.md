@@ -13,6 +13,9 @@ L0 Worker is a serverless-first execution layer that:
 - 📡 Streams events back to L1 orchestrator
 - 🔇 Enforces backpressure by silence (no `TASK_ACCEPTED` = rejection)
 - 🔁 Supports deterministic replay of recorded events
+- 🛡️ Guardrails, timeouts, and token resumption via L0 runtime
+- 🔧 Schema-only tool definitions for model tool calling
+- ⚡ Parallel execution (race / fanout) across multiple models
 
 ## 🛠️ Stack
 
@@ -171,7 +174,24 @@ Every task submission requires an `order` that defines execution and output cont
       },
       "fallbacks": [
         { "when": "error", "model": { "provider": "openai", "model": "gpt-4o-mini" } }
-      ]
+      ],
+      "timeout": {
+        "initialTokenMs": 10000,
+        "interTokenMs": 5000
+      },
+      "guardrails": {
+        "preset": "recommended",
+        "checkIntervalMs": 500
+      },
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get current weather for a city",
+          "schema": { "type": "object", "properties": { "city": { "type": "string" } }, "required": ["city"] }
+        }
+      ],
+      "parallel": { "mode": "race" },
+      "continueFromLastKnownGoodToken": true
     },
     "output": {
       "kind": "json",
@@ -188,6 +208,53 @@ Every task submission requires an `order` that defines execution and output cont
 |------|-------------|
 | `text` | Raw text stream |
 | `json` | Structured JSON with schema validation |
+
+### Timeouts
+
+Per-stream timeout configuration passed to the L0 runtime:
+
+| Field | Description |
+|-------|-------------|
+| `initialTokenMs` | Max time to wait for the first token |
+| `interTokenMs` | Max time between consecutive tokens |
+
+Timeouts trigger L0's `TIMEOUT_TRIGGERED` event and may cause retry or fallback depending on configuration. Critical for serverless deployments where idle time costs money.
+
+### Guardrails
+
+Guardrails validate output quality during streaming. Specify a preset name and optional check interval:
+
+| Preset | Description |
+|--------|-------------|
+| `minimal` | Zero-output detection only |
+| `recommended` | JSON, Markdown, and zero-output checks |
+| `strict` | All checks with strict JSON validation |
+| `json-only` | JSON structure validation |
+| `markdown-only` | Markdown structure validation |
+| `latex-only` | LaTeX structure validation |
+
+Guardrail violations emit `GUARDRAIL_PHASE_START` / `GUARDRAIL_PHASE_END` L0 events and are classified as `guardrail_violation` in `TASK_FAILED`.
+
+### Tools
+
+Tools are schema-only definitions passed to the model. The model generates tool call arguments which are captured in the result — the worker does **not** execute tools server-side.
+
+Each tool requires a `name` and JSON Schema `schema`. An optional `description` helps the model decide when to use the tool. When a tool call is generated, a `TASK_PROGRESS` event with `stage: "tool_invoked"` is emitted.
+
+### Parallel Execution
+
+When `parallel` is specified, all models in the `models` array run simultaneously:
+
+| Mode | Description |
+|------|-------------|
+| `race` | First model to complete wins; others are cancelled |
+| `fanout` | All models run to completion; results returned as JSON array |
+
+For `fanout`, an optional `max` field limits concurrency.
+
+### Token Resumption
+
+When `continueFromLastKnownGoodToken` is `true`, the L0 runtime checkpoints token progress and resumes from the last known good position on retry or fallback instead of restarting from scratch.
 
 ## 🔐 Authentication
 
@@ -227,7 +294,7 @@ const token = createHmac("sha256", L0_AUTH_SECRET)
 |-------|-------------|
 | `WORKER_READY` | Worker initialized and accepting tasks |
 | `TASK_ACCEPTED` | Task accepted for execution |
-| `TASK_PROGRESS` | Milestone reached (`first_token`) |
+| `TASK_PROGRESS` | Milestone reached (`first_token`, `tool_invoked`) |
 | `TASK_COMPLETED` | Execution succeeded with `finalMetrics` and `outputHash` |
 | `TASK_FAILED` | Execution failed with `failureClass` and `retryable` flag |
 | `WORKER_DRAINING` | Graceful shutdown in progress |
@@ -243,6 +310,8 @@ L0 runtime events are passed through directly to L1:
 - `FALLBACK_START`, `FALLBACK_END`
 - `GUARDRAIL_PHASE_START`, `GUARDRAIL_PHASE_END`
 - `TIMEOUT_TRIGGERED`, `NETWORK_ERROR`
+- `TOOL_REQUESTED`, `TOOL_START`, `TOOL_RESULT`, `TOOL_COMPLETED`
+- `CHECKPOINT_SAVED`, `RESUME_START`
 - And more (see [API.md](./API.md))
 
 ## ⏸️ Backpressure
