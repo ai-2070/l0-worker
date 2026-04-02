@@ -11,7 +11,7 @@ Complete API documentation for the L0 Worker.
   - [POST /api/config](#post-apiconfig)
 - [Request Types](#request-types)
   - [AuthEnvelope](#authenvelope)
-  - [InferenceOrder](#inferenceorder)
+  - [InferenceOrder](#inferenceorder) (incl. [TimeoutSpec](#timeoutspec), [GuardrailSpec](#guardrailspec), [ToolSpec](#toolspec), [ParallelSpec](#parallelspec))
   - [TaskSubmit](#tasksubmit)
   - [TaskReplayRequest](#taskreplayrequest)
   - [WorkerConfigUpdate](#workerconfigupdate)
@@ -211,10 +211,13 @@ interface InferenceOrder {
 ```typescript
 interface ExecutionSpec {
   models: ModelSpec[];           // Ordered preference list (required, min 1)
-  parallel?: ParallelSpec;       // Optional parallel execution
+  parallel?: ParallelSpec;       // Optional parallel execution (race or fanout)
   retry?: RetrySpec;             // Optional retry behavior
   fallbacks?: FallbackSpec[];    // Optional model fallbacks
-  tools?: ToolSpec[];            // Optional tool access
+  tools?: ToolSpec[];            // Optional tool definitions (schema-only)
+  timeout?: TimeoutSpec;         // Optional per-stream timeouts
+  guardrails?: GuardrailSpec;    // Optional output quality guardrails
+  continueFromLastKnownGoodToken?: boolean;  // Resume from checkpoint on retry/fallback
 }
 ```
 
@@ -262,33 +265,72 @@ interface FallbackSpec {
 
 #### ParallelSpec
 
+When specified, all models in `ExecutionSpec.models` run simultaneously.
+
 ```typescript
 interface ParallelSpec {
-  mode: "race" | "fanout";
-  max?: number;
+  mode: "race" | "fanout";  // race: first wins; fanout: all run to completion
+  max?: number;              // Max concurrency for fanout mode
 }
 ```
+
+- **race**: Returns the output from whichever model completes first. Others are cancelled.
+- **fanout**: All models run to completion. Results returned as a JSON array in `output`.
 
 #### ToolSpec
 
+Schema-only tool definitions. The model generates tool call arguments; the worker does **not** execute tools server-side. Tool calls are captured in the result and emitted as `TASK_PROGRESS` events with `stage: "tool_invoked"`.
+
 ```typescript
 interface ToolSpec {
-  name: string;
-  schema: JSONSchema;
+  name: string;              // Tool identifier
+  description?: string;      // Helps the model decide when to use the tool
+  schema: JSONSchema;        // JSON Schema for tool input parameters
 }
 ```
+
+#### TimeoutSpec
+
+Per-stream timeout configuration passed to the L0 runtime. Critical for serverless deployments.
+
+```typescript
+interface TimeoutSpec {
+  initialTokenMs?: number;   // Max time to wait for first token
+  interTokenMs?: number;     // Max time between consecutive tokens
+}
+```
+
+Timeouts trigger L0's `TIMEOUT_TRIGGERED` event and may cause retry or fallback depending on configuration.
+
+#### GuardrailSpec
+
+Output quality validation during streaming. Uses preset rule sets from the L0 runtime.
+
+```typescript
+interface GuardrailSpec {
+  preset?: "minimal" | "recommended" | "strict" | "json-only" | "markdown-only" | "latex-only";
+  checkIntervalMs?: number;  // How often to run guardrail checks (ms)
+}
+```
+
+| Preset | Description |
+|--------|-------------|
+| `minimal` | Zero-output detection only |
+| `recommended` | JSON, Markdown, and zero-output checks |
+| `strict` | All checks with strict JSON validation |
+| `json-only` | JSON structure validation |
+| `markdown-only` | Markdown structure validation |
+| `latex-only` | LaTeX structure validation |
+
+Guardrail violations are classified as `guardrail_violation` in `TASK_FAILED`.
 
 #### OutputSpec
 
 ```typescript
-type OutputSpec = TextOutput | TokenOutput | JsonOutput;
+type OutputSpec = TextOutput | JsonOutput;
 
 interface TextOutput {
   kind: "text";
-}
-
-interface TokenOutput {
-  kind: "tokens";
 }
 
 interface JsonOutput {
@@ -321,7 +363,27 @@ interface JsonOutput {
         "when": "error",
         "model": { "provider": "openai", "model": "gpt-4o-mini" }
       }
-    ]
+    ],
+    "timeout": {
+      "initialTokenMs": 10000,
+      "interTokenMs": 5000
+    },
+    "guardrails": {
+      "preset": "recommended",
+      "checkIntervalMs": 500
+    },
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "Get current weather for a location",
+        "schema": {
+          "type": "object",
+          "properties": { "city": { "type": "string" } },
+          "required": ["city"]
+        }
+      }
+    ],
+    "continueFromLastKnownGoodToken": true
   },
   "output": {
     "kind": "json",
@@ -509,11 +571,16 @@ Milestone reached during execution.
 interface TaskProgressEvent {
   type: "TASK_PROGRESS";
   taskId: string;
-  stage: "first_token" | "streaming" | "tool_invoked" | "checkpoint_written";
+  stage: "first_token" | "tool_invoked";
   ts: number;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;  // For tool_invoked: { toolName, toolArgs }
 }
 ```
+
+| Stage | When emitted |
+|-------|-------------|
+| `first_token` | First token received from the model |
+| `tool_invoked` | Model generated a tool call (metadata contains `toolName` and `toolArgs`) |
 
 #### TASK_COMPLETED
 
