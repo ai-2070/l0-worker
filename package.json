@@ -16,7 +16,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^2.0.88",
+    "@ai-sdk/openai": "^3.0.0",
     "@ai2070/l0": "^0.20.0",
     "ai": "^5.0.116",
     "uuid": "^13.0.0",
