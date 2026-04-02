@@ -1,5 +1,7 @@
 # L0 Worker
 
+![L0: The Missing AI Reliability Substrate](img/l0-banner.jpg)
+
 Stateless, deterministic execution substrate for LLM inference. Receives commands from L1 orchestrator, executes tasks using the L0 runtime, and emits factual events back.
 
 ## 📖 Overview
