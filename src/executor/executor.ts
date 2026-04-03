@@ -429,26 +429,16 @@ async function executeParallel(
   });
 
   if (mode === "race") {
+    // race() consumes streams internally — content is in state.content
     const raceResult = await race(operations);
 
-    // Consume the winning stream
-    let content = "";
-    let tokenCount = 0;
-    let firstTokenEmitted = false;
-
-    for await (const event of raceResult.stream) {
-      if (event.type === "token" && event.value) {
-        if (!firstTokenEmitted) {
-          firstTokenEmitted = true;
-          callbacks?.onFirstToken?.();
-        }
-        content += event.value;
-        tokenCount++;
-        callbacks?.onToken?.(event.value);
-      }
-    }
-
+    const content = raceResult.state.content ?? "";
+    const tokenCount = raceResult.state.tokenCount ?? 0;
     const winnerModel = execution.models[raceResult.winnerIndex] ?? execution.models[0];
+
+    if (content.length > 0) {
+      callbacks?.onFirstToken?.();
+    }
 
     return {
       content,
@@ -460,7 +450,7 @@ async function executeParallel(
     };
   }
 
-  // Fanout mode — run all models, return aggregated results as JSON array
+  // Fanout mode — parallel() consumes streams internally
   const parallelResult = await parallel(operations, {
     concurrency: execution.parallel!.max,
     failFast: false,
@@ -476,15 +466,9 @@ async function executeParallel(
       outputs.push("");
       continue;
     }
-    // Consume each result stream
-    let content = "";
-    let count = 0;
-    for await (const event of res.stream) {
-      if (event.type === "token" && event.value) {
-        content += event.value;
-        count++;
-      }
-    }
+    // Content is already in state.content after parallel() resolves
+    const content = res.state.content ?? "";
+    const count = res.state.tokenCount ?? 0;
     outputs.push(content);
     totalTokens += count;
     totalInput += res.state.inputTokens ?? 0;
