@@ -27,7 +27,7 @@
     "@vercel/node": "^5.5.16",
     "dotenv": "^17.2.3",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.0",
     "vercel": "^51.0.0",
     "vitest": "^4.0.16"
   },
